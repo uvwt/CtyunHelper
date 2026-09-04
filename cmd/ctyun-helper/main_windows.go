@@ -74,6 +74,10 @@ func buildRuntime() (*app.Runtime, error) {
 	if _, err := storage.LoadStateJSON(paths, "safety.json", &safetyState); err != nil {
 		return nil, err
 	}
+	var redeemState automation.RedeemState
+	if _, err := storage.LoadStateJSON(paths, "redeem.json", &redeemState); err != nil {
+		return nil, err
+	}
 	guard := automation.NewGuard(policy, safetyState, automation.GuardOptions{
 		Save: func(state automation.SafetyState) error {
 			return storage.SaveStateJSON(paths, "safety.json", state)
@@ -81,7 +85,22 @@ func buildRuntime() (*app.Runtime, error) {
 	})
 	authFlow := app.NewAuthFlow(authClient, accountStore, model, guard)
 	aiJob := automation.NewAIJob(pointsClient, eaiClient, guard, "你好")
-	taskAutomation, err := app.NewTaskAutomation(model, aiJob)
+	pointsJob := automation.NewPointsJob(pointsClient, automation.PointsJobOptions{})
+	redeemPlan := automation.RedeemPlan{
+		Enabled: config.Redeem.Enabled, Account: config.Redeem.Account, DesktopID: config.Redeem.DesktopID,
+		ProductID: config.Redeem.ProductID, ProductName: config.Redeem.ProductName,
+		ProductType: config.Redeem.ProductType, CostPoints: config.Redeem.CostPoints,
+		MaxRedeemTimes: config.Redeem.MaxRedeemTimes, ScheduleType: config.Redeem.ScheduleType,
+		IntervalDays: config.Redeem.IntervalDays, MonthlyDays: config.Redeem.MonthlyDays,
+	}
+	redeemJob := automation.NewRedeemJob(pointsClient, guard, redeemPlan, redeemState, automation.RedeemJobOptions{
+		SaveState: func(state automation.RedeemState) error {
+			return storage.SaveStateJSON(paths, "redeem.json", state)
+		},
+	})
+	taskAutomation, err := app.NewTaskAutomationWithOptions(model, app.TaskAutomationOptions{
+		AIJob: aiJob, PointsJob: pointsJob, RedeemJob: redeemJob,
+	})
 	if err != nil {
 		return nil, err
 	}

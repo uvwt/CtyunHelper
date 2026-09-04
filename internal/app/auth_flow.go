@@ -112,7 +112,12 @@ func (f *AuthFlow) CompleteLogin(ctx context.Context, account, password, captcha
 		return auth.Profile{}, fmt.Errorf("app: 保存账号配置: %w", err)
 	}
 
-	// 到这里候选登录才正式成为当前账号。低层 Login 不直接修改 Client Profile。
+	// 此时只完成“服务端登录 + 本地持久化”，仍不切换进程内当前 Profile。
+	// Runtime 会先停止旧 Clink Session，再调用 CommitLogin 原子提交新账号。
+	return profile, nil
+}
+
+func (f *AuthFlow) CommitLogin(account string, profile auth.Profile) {
 	f.client.UseProfile(profile)
 	f.model.Update(func(state *State) {
 		state.Account = account
@@ -123,7 +128,6 @@ func (f *AuthFlow) CompleteLogin(ctx context.Context, account, password, captcha
 			state.Connection = ConnectionDeviceBind
 		}
 	})
-	return profile, nil
 }
 
 func (f *AuthFlow) setLoginError(err error) {

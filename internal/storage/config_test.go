@@ -45,6 +45,11 @@ func TestConfigRoundTrip(t *testing.T) {
 	config := DefaultConfig()
 	config.Account = "account"
 	config.Device = DeviceConfig{Code: "ctyun_fixed", Name: "Windows", Model: "windows", Type: "25"}
+	config.Redeem = RedeemConfig{
+		Enabled: true, Account: "account", DesktopID: 42, ProductID: 99, ProductName: "奖励",
+		ProductType: "gift", CostPoints: 300, MaxRedeemTimes: 2,
+		ScheduleType: "monthly_days", MonthlyDays: []int{1, -1},
+	}
 	if err := SaveConfig(paths, config); err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +57,7 @@ func TestConfigRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Account != "account" || loaded.Device.Code != "ctyun_fixed" || loaded.Safety.MaxAI != 2 {
+	if loaded.Account != "account" || loaded.Device.Code != "ctyun_fixed" || loaded.Safety.MaxAI != 2 || !loaded.Redeem.Enabled || loaded.Redeem.DesktopID != 42 || loaded.Redeem.CostPoints != 300 {
 		t.Fatalf("loaded = %#v", loaded)
 	}
 	info, err := os.Stat(filepath.Join(paths.ConfigDir, "config.json"))

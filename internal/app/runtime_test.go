@@ -163,7 +163,7 @@ func TestRuntimeRejectsAccountSwitchWhileAIJobIsRunning(t *testing.T) {
 		"1234",
 		auth.LoginChallenge{ID: "challenge", Code: "salt"},
 	)
-	if err == nil || err.Error() != "app: AI 任务正在运行，暂不能更换账号" {
+	if err == nil || err.Error() != "app: 自动任务正在运行，暂不能更换账号" {
 		t.Fatalf("CompleteLogin() error = %v", err)
 	}
 	if got := model.Snapshot().Account; got != "old-account" {

@@ -31,10 +31,13 @@ Windows-only 的天翼云电脑桌面助手。最终目标是单进程、纯 Go�
 - Safety Policy：AI 2 次/天、真实登录请求 2 次/天、兑换 1 次/天、连续 3 次失败后冷却 6 小时；额度/冷却状态持久化到用户状态目录，重启不会清零。
 - EAI Gateway AES-ECB 解密、IAM Ticket SSO、RSA clientKey、AES sessionKey、Web-Signature 与 SSE Chat 全部已改成 Go 标准库实现。
 - AI 积分任务编排：任务完成时不发送；真正发送前才占用每日额度；一次运行只发送一次对话，积分延迟期间只轮询状态。
-- 进程内 Scheduler：默认 AI 任务 03:00 / 20:00，支持手动执行、不重入、记录 LastRun/NextRun/LastError；Windows 睡眠恢复不会批量补跑错过任务。
+- 进程内 Scheduler：AI 默认 03:00 / 20:00；积分只读刷新默认 04:00 / 06:00；兑换检查默认 04:05 / 06:05。支持手动执行、不重入、记录 LastRun/NextRun/LastError；Windows 睡眠恢复不会批量补跑错过任务。
+- “使用1小时”积分任务已迁移：兑换前最多等待 80 分钟、每 5 分钟只读检查一次；超时只停止等待，不会因此重复连接云电脑。
+- 自动兑换业务已迁移：默认关闭；启用后会重新验证云电脑、商品状态和积分成本，按当前通用积分计算次数，并在一次 `placeOrder` 中提交；失败后不递减数量连续试探。
+- 兑换前先持久化每日 Safety 额度和 `pending` 状态；若进程在下单返回前崩溃，下次启动会把结果视为“不确定”并停止自动兑换，而不是猜测失败后再次扣积分。
 - App Keepalive 主链：认证 Profile -> 可用桌面选择 -> 连接数据解析 -> Clink Worker -> 统一 App State。
 - Windows GUI subsystem 主程序、单实例 Mutex、主窗口、关闭隐藏、系统托盘；登录和设备绑定使用独立原生窗口，验证码只在内存中显示。
-- 主窗口与托盘可手动执行 AI 任务，连接状态与 AI Scheduler 状态都由 App Model 驱动，不直接访问协议 Client。
+- 主窗口与托盘可手动执行 AI、刷新积分；启用兑换配置后还可手动“检查 / 执行兑换”。连接、积分、“使用1小时”、AI 与兑换状态都由 App Model 驱动，不直接访问协议 Client。
 - 配置路径、敏感日志字段脱敏基础。
 
 当前验证边界：
@@ -45,7 +48,8 @@ Windows-only 的天翼云电脑桌面助手。最终目标是单进程、纯 Go�
 - 当前没有从官方客户端旧数据库页/WAL 恢复残留登录凭据做测试；真实 `pageDesktop/connect` 将通过本程序自己的正式登录流程验证。
 - Clink Worker 已能完成本地协议集成测试，但**尚未在真实天翼 Clink 服务端连续在线验证**。
 - Go EAI 已通过本地 Gateway -> RSA SSO -> AES sessionKey -> tenant/model -> signed SSE chat 全链测试；尚未用 CtyunHelper 自身登录态做真实 EAI 服务端验证。
-- 自动兑换业务编排、积分刷新 Job、完整概览/任务/兑换/日志/设置页面仍待完善。
+- 自动兑换与积分刷新已完成本地全链单测，但**尚未使用真实账号执行 Go 版 `placeOrder`**；当前开发/测试不会触发真实兑换。
+- 完整概览/任务/兑换配置/日志/设置页面仍待完善；当前兑换计划先通过 `config.json` 显式配置。
 
 只有在不运行 `CtYun.dll` 的情况下，纯 Go 版本真实连续在线并由天翼服务端确认“使用1小时”任务完成，才视为完成对第三方保活程序的替代。
 
@@ -64,6 +68,30 @@ internal/storage       配置、Credential Manager、DPAPI
 internal/logging       日志脱敏与后续滚动日志
 internal/winui         Windows 原生窗口、托盘与系统集成
 ```
+
+## 自动兑换配置
+
+自动兑换默认关闭。配置文件位于 Go `os.UserConfigDir()/CtyunHelper/config.json`（Windows 通常对应用户 AppData 配置目录）。只有 `redeem.enabled=true` 且目标云电脑、商品、积分成本等字段完整时，程序才可能调用兑换接口。
+
+```json
+{
+  "redeem": {
+    "enabled": false,
+    "account": "",
+    "desktopId": 0,
+    "productId": 0,
+    "productName": "",
+    "productType": "",
+    "costPoints": 0,
+    "maxRedeemTimes": 0,
+    "scheduleType": "daily",
+    "intervalDays": 1,
+    "monthlyDays": []
+  }
+}
+```
+
+`account` 必须填写创建这份兑换计划时的天翼账号；更换账号后，账号不匹配的兑换计划会自动禁用，不能继承到新账号。`maxRedeemTimes=0` 表示按当前积分尽量兑换；`scheduleType` 支持 `daily`、`interval_days`、`monthly_days`，其中 `monthlyDays` 的 `-1` 表示月末。兑换运行状态单独保存到用户缓存数据目录的 `redeem.json`；如果其中记录了未确认结果的 `pending`，程序会停止后续自动兑换，等待人工确认，而不会自动重试。
 
 ## 开发验证
 

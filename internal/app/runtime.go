@@ -54,6 +54,46 @@ func (r *Runtime) RunAITask() error {
 	return r.automation.RunAI(ctx)
 }
 
+func (r *Runtime) RunPointsTask() error {
+	if r.automation == nil {
+		return fmt.Errorf("app: 积分刷新任务未初始化")
+	}
+	state := r.model.Snapshot()
+	if state.Connection == ConnectionAuth || state.Connection == ConnectionDeviceBind {
+		return fmt.Errorf("app: 请先完成登录和设备绑定")
+	}
+	r.mu.Lock()
+	ctx := r.rootCtx
+	r.mu.Unlock()
+	if ctx == nil || ctx.Err() != nil {
+		return fmt.Errorf("app: Runtime 尚未启动或已经停止")
+	}
+	return r.automation.RunPoints(ctx)
+}
+
+func (r *Runtime) RunRedeemTask() error {
+	if r.automation == nil {
+		return fmt.Errorf("app: 兑换任务未初始化")
+	}
+	state := r.model.Snapshot()
+	if state.AutomationPaused {
+		return fmt.Errorf("app: 自动任务已暂停")
+	}
+	if state.Connection == ConnectionAuth || state.Connection == ConnectionDeviceBind {
+		return fmt.Errorf("app: 请先完成登录和设备绑定")
+	}
+	if !state.RedeemEnabled {
+		return fmt.Errorf("app: 自动兑换未启用")
+	}
+	r.mu.Lock()
+	ctx := r.rootCtx
+	r.mu.Unlock()
+	if ctx == nil || ctx.Err() != nil {
+		return fmt.Errorf("app: Runtime 尚未启动或已经停止")
+	}
+	return r.automation.RunRedeem(ctx)
+}
+
 func (r *Runtime) Start(parent context.Context) {
 	r.mu.Lock()
 	if r.rootCtx != nil {
@@ -81,8 +121,11 @@ func (r *Runtime) Stop() {
 }
 
 func (r *Runtime) StartSession() {
+	if r.auth == nil || r.auth.client == nil || r.session == nil {
+		return
+	}
 	profile, ok := r.auth.client.Profile()
-	if !ok || !profile.BondedDevice || r.session == nil {
+	if !ok || !profile.BondedDevice {
 		return
 	}
 	r.mu.Lock()
@@ -134,7 +177,15 @@ func (r *Runtime) runSession(ctx context.Context, done chan struct{}) {
 }
 
 func (r *Runtime) Restore(account string) (bool, error) {
-	return r.auth.Restore(account)
+	restored, err := r.auth.Restore(account)
+	if r.automation != nil {
+		if restored && err == nil {
+			r.automation.UpdateAccount(account)
+		} else {
+			r.automation.UpdateAccount("")
+		}
+	}
+	return restored, err
 }
 
 func (r *Runtime) LoadStoredLogin() (account, password string, err error) {
@@ -146,11 +197,17 @@ func (r *Runtime) BeginLogin(ctx context.Context, account string) (auth.LoginCha
 }
 
 func (r *Runtime) CompleteLogin(ctx context.Context, account, password, captchaCode string, challenge auth.LoginChallenge) (auth.Profile, error) {
+	if r.automation != nil {
+		if !r.automation.activityMu.TryLock() {
+			return auth.Profile{}, fmt.Errorf("app: 自动任务正在运行，暂不能更换账号")
+		}
+		defer r.automation.activityMu.Unlock()
+	}
 	// AI Job 会在一次执行中连续使用积分接口和 EAI；运行中切换 Profile 会让
 	// 前后请求落到不同账号。账号切换属于低频人工操作，直接拒绝比中途取消
 	// 自动任务更容易保持整条业务链的一致性。
-	if r.model.Snapshot().AITask.Running {
-		return auth.Profile{}, fmt.Errorf("app: AI 任务正在运行，暂不能更换账号")
+	if state := r.model.Snapshot(); state.AITask.Running || state.PointsTask.Running || state.RedeemTask.Running {
+		return auth.Profile{}, fmt.Errorf("app: 自动任务正在运行，暂不能更换账号")
 	}
 	profile, err := r.auth.CompleteLogin(ctx, account, password, captchaCode, challenge)
 	if err != nil {
@@ -162,6 +219,10 @@ func (r *Runtime) CompleteLogin(ctx context.Context, account, password, captchaC
 	// sessionActive 拦住，最终形成“界面是新账号、连接还是旧账号”的错位状态。
 	if err := r.stopSession(ctx); err != nil {
 		return profile, fmt.Errorf("app: 停止旧云电脑会话: %w", err)
+	}
+	r.auth.CommitLogin(account, profile)
+	if r.automation != nil {
+		r.automation.UpdateAccount(account)
 	}
 	if profile.BondedDevice {
 		r.StartSession()
@@ -178,6 +239,12 @@ func (r *Runtime) SendDeviceSMS(ctx context.Context, captchaCode, captchaKey str
 }
 
 func (r *Runtime) CompleteDeviceBinding(ctx context.Context, smsCode, smsKey string) error {
+	if r.automation != nil {
+		if !r.automation.activityMu.TryLock() {
+			return fmt.Errorf("app: 自动任务正在运行，暂不能完成设备绑定")
+		}
+		defer r.automation.activityMu.Unlock()
+	}
 	if err := r.auth.CompleteDeviceBinding(ctx, smsCode, smsKey); err != nil {
 		return err
 	}
@@ -186,12 +253,28 @@ func (r *Runtime) CompleteDeviceBinding(ctx context.Context, smsCode, smsKey str
 }
 
 func (r *Runtime) Logout() error {
-	r.mu.Lock()
-	if r.sessionCancel != nil {
-		r.sessionCancel()
+	if r.automation != nil {
+		if !r.automation.activityMu.TryLock() {
+			return fmt.Errorf("app: 自动任务正在运行，暂不能退出账号")
+		}
+		defer r.automation.activityMu.Unlock()
 	}
-	r.mu.Unlock()
-	return r.auth.Logout()
+	state := r.model.Snapshot()
+	if state.AITask.Running || state.PointsTask.Running || state.RedeemTask.Running {
+		return fmt.Errorf("app: 自动任务正在运行，暂不能退出账号")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := r.stopSession(ctx); err != nil {
+		return fmt.Errorf("app: 停止云电脑会话: %w", err)
+	}
+	if err := r.auth.Logout(); err != nil {
+		return err
+	}
+	if r.automation != nil {
+		r.automation.UpdateAccount("")
+	}
+	return nil
 }
 
 func (r *Runtime) stopSession(ctx context.Context) error {

@@ -45,10 +45,14 @@ const (
 	nifTip             = 0x00000004
 	menuOpen           = 1001
 	menuRunAI          = 1002
-	menuExit           = 1003
+	menuRefreshPoints  = 1003
+	menuRunRedeem      = 1004
+	menuExit           = 1005
 	buttonLogin        = 1101
 	buttonBind         = 1102
 	buttonAI           = 1103
+	buttonPoints       = 1104
+	buttonRedeem       = 1105
 	errorAlreadyExists = 183
 )
 
@@ -141,13 +145,15 @@ var (
 )
 
 var (
-	tray        notifyIconData
-	statusText  uintptr
-	loginButton uintptr
-	bindButton  uintptr
-	aiButton    uintptr
-	uiModel     *app.Model
-	uiRuntime   *app.Runtime
+	tray         notifyIconData
+	statusText   uintptr
+	loginButton  uintptr
+	bindButton   uintptr
+	aiButton     uintptr
+	pointsButton uintptr
+	redeemButton uintptr
+	uiModel      *app.Model
+	uiRuntime    *app.Runtime
 )
 
 func Run(buildRuntime func() (*app.Runtime, error)) error {
@@ -283,6 +289,10 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 			}
 		case buttonAI, menuRunAI:
 			startAITask(hwnd)
+		case buttonPoints, menuRefreshPoints:
+			startPointsTask(hwnd)
+		case buttonRedeem, menuRunRedeem:
+			startRedeemTask(hwnd)
 		case menuExit:
 			removeTrayIcon()
 			destroyWindow.Call(hwnd)
@@ -305,7 +315,7 @@ func createStatusText(hwnd, instance uintptr) {
 		uintptr(unsafe.Pointer(class)),
 		uintptr(unsafe.Pointer(text)),
 		wsChild|wsVisible|ssLeft,
-		24, 24, 820, 120,
+		24, 24, 820, 185,
 		hwnd, 0, instance, 0,
 	)
 }
@@ -316,22 +326,36 @@ func createActionButtons(hwnd, instance uintptr) {
 	loginButton, _, _ = createWindowExW.Call(
 		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(loginText)),
 		wsChild|wsVisible|bsPushButton,
-		24, 165, 150, 34,
+		24, 225, 150, 34,
 		hwnd, buttonLogin, instance, 0,
 	)
 	bindText := utf16Ptr("完成设备绑定")
 	bindButton, _, _ = createWindowExW.Call(
 		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(bindText)),
 		wsChild|wsVisible|bsPushButton,
-		186, 165, 150, 34,
+		186, 225, 150, 34,
 		hwnd, buttonBind, instance, 0,
 	)
 	aiText := utf16Ptr("立即执行 AI 任务")
 	aiButton, _, _ = createWindowExW.Call(
 		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(aiText)),
 		wsChild|wsVisible|bsPushButton,
-		348, 165, 150, 34,
+		348, 225, 150, 34,
 		hwnd, buttonAI, instance, 0,
+	)
+	pointsText := utf16Ptr("刷新积分")
+	pointsButton, _, _ = createWindowExW.Call(
+		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(pointsText)),
+		wsChild|wsVisible|bsPushButton,
+		510, 225, 120, 34,
+		hwnd, buttonPoints, instance, 0,
+	)
+	redeemText := utf16Ptr("检查 / 执行兑换")
+	redeemButton, _, _ = createWindowExW.Call(
+		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(redeemText)),
+		wsChild|wsVisible|bsPushButton,
+		642, 225, 165, 34,
+		hwnd, buttonRedeem, instance, 0,
 	)
 }
 
@@ -339,9 +363,10 @@ func updateStatusText(state app.State) {
 	if statusText == 0 {
 		return
 	}
+	jobsRunning := state.AITask.Running || state.PointsTask.Running || state.RedeemTask.Running
 	if loginButton != 0 {
 		enabled := uintptr(1)
-		if state.AITask.Running {
+		if jobsRunning {
 			enabled = 0
 		}
 		enableWindow.Call(loginButton, enabled)
@@ -359,6 +384,20 @@ func updateStatusText(state app.State) {
 			enabled = 0
 		}
 		enableWindow.Call(aiButton, enabled)
+	}
+	if pointsButton != 0 {
+		enabled := uintptr(1)
+		if state.Connection == app.ConnectionAuth || state.Connection == app.ConnectionDeviceBind || state.PointsTask.Running || state.RedeemTask.Running {
+			enabled = 0
+		}
+		enableWindow.Call(pointsButton, enabled)
+	}
+	if redeemButton != 0 {
+		enabled := uintptr(1)
+		if !state.RedeemEnabled || state.AutomationPaused || state.Connection == app.ConnectionAuth || state.Connection == app.ConnectionDeviceBind || state.PointsTask.Running || state.RedeemTask.Running {
+			enabled = 0
+		}
+		enableWindow.Call(redeemButton, enabled)
 	}
 	connection := map[app.ConnectionState]string{
 		app.ConnectionStopped:    "等待启动",
@@ -381,23 +420,49 @@ func updateStatusText(state app.State) {
 	if lastError == "" {
 		lastError = "无"
 	}
+	usage := "任务列表未返回"
+	if state.UsageTask.Found {
+		if state.UsageTask.Status == 2 {
+			usage = "已完成"
+		} else {
+			usage = fmt.Sprintf("进行中（status=%d, progress=%d）", state.UsageTask.Status, state.UsageTask.Progress)
+		}
+	}
+	pointsStatus := "等待"
+	if state.PointsTask.Running {
+		pointsStatus = "刷新中"
+	} else if state.PointsTask.LastError != "" {
+		pointsStatus = "异常：" + state.PointsTask.LastError
+	}
 	aiStatus := "等待"
 	if state.AutomationPaused {
 		aiStatus = "已暂停"
 	} else if state.AITask.Running {
 		aiStatus = "运行中"
+	} else if state.AITask.LastError != "" {
+		aiStatus = "异常：" + state.AITask.LastError
+	}
+	redeemStatus := "未启用"
+	if state.RedeemEnabled {
+		redeemStatus = "等待"
+		if state.AutomationPaused {
+			redeemStatus = "已暂停"
+		} else if state.RedeemTask.Running {
+			redeemStatus = "运行中"
+		} else if state.RedeemTask.LastError != "" {
+			redeemStatus = "异常：" + state.RedeemTask.LastError
+		}
+	}
+	if state.RedeemSummary != "" {
+		redeemStatus += "；" + state.RedeemSummary
 	}
 	nextAI := "未安排"
 	if !state.AITask.NextRun.IsZero() {
 		nextAI = state.AITask.NextRun.Format("01-02 15:04")
 	}
-	aiError := state.AITask.LastError
-	if aiError == "" {
-		aiError = "无"
-	}
 	text := fmt.Sprintf(
-		"连接状态：%s\r\n云电脑：%s\r\n当前积分：%d\r\nAI任务：%s，下次 %s\r\nAI最近异常：%s\r\n最近异常：%s",
-		connection, desktopName, state.Points, aiStatus, nextAI, aiError, lastError,
+		"连接状态：%s\r\n云电脑：%s\r\n当前积分：%d\r\n使用1小时：%s\r\n积分刷新：%s\r\nAI任务：%s，下次 %s\r\n自动兑换：%s\r\n最近异常：%s",
+		connection, desktopName, state.Points, usage, pointsStatus, aiStatus, nextAI, redeemStatus, lastError,
 	)
 	ptr := utf16Ptr(text)
 	setWindowTextW.Call(statusText, uintptr(unsafe.Pointer(ptr)))
@@ -410,6 +475,20 @@ func startAITask(_ uintptr) {
 	// Scheduler 会把运行状态和业务错误同步到 App Model；后台 goroutine 不直接
 	// 调用 MessageBox，避免跨 Win32 UI 线程操作窗口。
 	go func() { _ = uiRuntime.RunAITask() }()
+}
+
+func startPointsTask(_ uintptr) {
+	if uiRuntime == nil {
+		return
+	}
+	go func() { _ = uiRuntime.RunPointsTask() }()
+}
+
+func startRedeemTask(_ uintptr) {
+	if uiRuntime == nil {
+		return
+	}
+	go func() { _ = uiRuntime.RunRedeemTask() }()
 }
 
 func addTrayIcon(hwnd, icon uintptr) error {
@@ -444,9 +523,15 @@ func showTrayMenu(hwnd uintptr) {
 	defer destroyMenu.Call(menu)
 	openText := utf16Ptr("打开主界面")
 	runAIText := utf16Ptr("立即执行 AI 任务")
+	refreshPointsText := utf16Ptr("刷新积分")
+	runRedeemText := utf16Ptr("检查 / 执行兑换")
 	exitText := utf16Ptr("退出")
 	appendMenuW.Call(menu, mfString, menuOpen, uintptr(unsafe.Pointer(openText)))
 	appendMenuW.Call(menu, mfString, menuRunAI, uintptr(unsafe.Pointer(runAIText)))
+	appendMenuW.Call(menu, mfString, menuRefreshPoints, uintptr(unsafe.Pointer(refreshPointsText)))
+	if uiModel != nil && uiModel.Snapshot().RedeemEnabled {
+		appendMenuW.Call(menu, mfString, menuRunRedeem, uintptr(unsafe.Pointer(runRedeemText)))
+	}
 	appendMenuW.Call(menu, mfSeparator, 0, 0)
 	appendMenuW.Call(menu, mfString, menuExit, uintptr(unsafe.Pointer(exitText)))
 

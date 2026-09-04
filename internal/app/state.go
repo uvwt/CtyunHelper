@@ -25,6 +25,12 @@ type JobStatus struct {
 	LastError string
 }
 
+type UsageTaskStatus struct {
+	Found    bool
+	Status   int
+	Progress int
+}
+
 type State struct {
 	Account          string
 	DesktopID        string
@@ -32,7 +38,12 @@ type State struct {
 	Connection       ConnectionState
 	OnlineSince      time.Time
 	Points           int
+	UsageTask        UsageTaskStatus
 	AITask           JobStatus
+	PointsTask       JobStatus
+	RedeemTask       JobStatus
+	RedeemEnabled    bool
+	RedeemSummary    string
 	AutomationPaused bool
 	LastError        string
 	ChangedAt        time.Time

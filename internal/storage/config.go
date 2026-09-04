@@ -16,6 +16,7 @@ type Config struct {
 	Account    string           `json:"account"`
 	Device     DeviceConfig     `json:"device"`
 	Automation AutomationConfig `json:"automation"`
+	Redeem     RedeemConfig     `json:"redeem"`
 	Safety     SafetyConfig     `json:"safety"`
 }
 
@@ -31,6 +32,22 @@ type AutomationConfig struct {
 	Enabled bool `json:"enabled"`
 }
 
+// RedeemConfig 只描述用户明确选择的兑换计划。默认关闭；程序不会根据
+// 当前可用商品自动挑选奖励，避免升级/首次运行后意外消费积分。
+type RedeemConfig struct {
+	Enabled        bool   `json:"enabled"`
+	Account        string `json:"account"`
+	DesktopID      int64  `json:"desktopId"`
+	ProductID      int64  `json:"productId"`
+	ProductName    string `json:"productName"`
+	ProductType    string `json:"productType"`
+	CostPoints     int    `json:"costPoints"`
+	MaxRedeemTimes int    `json:"maxRedeemTimes"`
+	ScheduleType   string `json:"scheduleType"`
+	IntervalDays   int    `json:"intervalDays"`
+	MonthlyDays    []int  `json:"monthlyDays"`
+}
+
 type SafetyConfig struct {
 	MaxAI         int `json:"maxAI"`
 	MaxLogin      int `json:"maxLogin"`
@@ -42,6 +59,9 @@ type SafetyConfig struct {
 func DefaultConfig() Config {
 	return Config{
 		Automation: AutomationConfig{Enabled: true},
+		Redeem: RedeemConfig{
+			Enabled: false, ScheduleType: "daily", IntervalDays: 1,
+		},
 		Safety: SafetyConfig{
 			MaxAI: 2, MaxLogin: 2, MaxRedeem: 1, MaxFailures: 3, CooldownHours: 6,
 		},

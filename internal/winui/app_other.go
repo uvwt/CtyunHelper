@@ -8,7 +8,7 @@ import (
 	"github.com/uvwt/CtyunHelper/internal/app"
 )
 
-func Run(func() (*app.Runtime, error)) error {
+func Run(func() (*app.Runtime, error), RunOptions) error {
 	return fmt.Errorf("Windows UI 仅支持 Windows")
 }
 

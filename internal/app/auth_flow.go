@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/uvwt/CtyunHelper/internal/automation"
 	"github.com/uvwt/CtyunHelper/internal/ctyun/auth"
@@ -199,14 +200,29 @@ func (f *AuthFlow) HandleSessionError(err error) error {
 
 func (f *AuthFlow) Logout() error {
 	f.client.ClearProfile()
-	if err := f.store.DeleteProfile(); err != nil {
-		return err
+	cleanupErr := errors.Join(
+		f.store.DeleteProfile(),
+		f.store.DeleteLogin(),
+		f.store.SaveAccount(""),
+	)
+	message := ""
+	if cleanupErr != nil {
+		message = cleanupErr.Error()
 	}
-	if err := f.store.DeleteLogin(); err != nil {
-		return err
-	}
-	f.requireLogin("")
-	return nil
+	// 当前进程的认证态已经被主动清空，即使某个持久化删除动作失败，也不能
+	// 继续把旧账号/旧积分显示成“仍已登录”。错误保留给 UI，用户可再次退出
+	// 或人工处理磁盘/凭据问题；下一次启动也不会把内存 Profile 复活。
+	f.model.Update(func(state *State) {
+		state.Account = ""
+		state.DesktopID = ""
+		state.DesktopName = ""
+		state.OnlineSince = time.Time{}
+		state.Points = 0
+		state.UsageTask = UsageTaskStatus{}
+		state.Connection = ConnectionAuth
+		state.LastError = message
+	})
+	return cleanupErr
 }
 
 func (f *AuthFlow) setAuthError(err error) {

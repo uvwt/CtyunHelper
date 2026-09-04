@@ -7,7 +7,7 @@ func TestStartupCommandAlwaysQuotesExecutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := startup.Command(); got != `"C:\Program Files\CtyunHelper\CtyunHelper.exe"` {
+	if got := startup.Command(); got != `"C:\Program Files\CtyunHelper\CtyunHelper.exe" --startup` {
 		t.Fatalf("command = %q", got)
 	}
 }

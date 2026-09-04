@@ -40,7 +40,9 @@ Windows-only 的天翼云电脑桌面助手。最终目标是单进程、纯 Go�
 - App Keepalive 主链：认证 Profile -> 可用桌面选择 -> 连接数据解析 -> Clink Worker -> 统一 App State。
 - Windows GUI subsystem 主程序、单实例 Mutex、主窗口、关闭隐藏、系统托盘；登录和设备绑定使用独立原生窗口，验证码只在内存中显示。
 - 主窗口与托盘可手动执行 AI、刷新积分；启用兑换配置后还可手动“检查 / 执行兑换”。连接、积分、“使用1小时”、AI 与兑换状态都由 App Model 驱动，不直接访问协议 Client。
-- 主窗口与托盘提供原生“设置”和“日志”窗口；设置支持启停 AI/兑换任务和当前用户登录后自启动，自启动使用 HKCU Run，不需要管理员权限。
+- 主窗口与托盘提供原生“设置”和“日志”窗口；设置支持启停 AI/兑换任务和当前用户登录后自启动，自启动使用 HKCU Run，不需要管理员权限。登录后自启动通过专用 `--startup` 参数静默进入托盘，不主动弹出主窗口。
+- 主界面提供“退出账号”，会先结束当前 Clink 会话，再删除 Credential Manager 密码、DPAPI Profile 和持久账号，并清除当前界面的账号积分/桌面状态。
+- Windows UI 在创建窗口前优先启用 Per-Monitor V2 DPI awareness，并在较旧 Windows 上降级到 Per-Monitor / System DPI aware；应用退出时会显式销毁登录、绑定、兑换、设置和日志辅助窗口。
 - 运行日志按大小滚动并限制备份数量，主生命周期、连接、积分、AI、兑换等状态统一进入同一日志；密码、Token、Ticket、DeviceCode 等敏感值在写盘前脱敏。日志窗口订阅 App 事件并实时刷新。
 
 当前验证边界：
@@ -74,7 +76,7 @@ internal/winui         Windows 原生窗口、托盘与系统集成
 
 ## 设置与日志
 
-“设置”窗口目前包含 AI/兑换任务开关和“Windows 登录后自动启动”。自启动项写入当前用户 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，不会申请管理员权限；配置文件写入失败时会回滚本次注册表修改，避免注册表与应用状态不一致。
+“设置”窗口目前包含 AI/兑换任务开关和“Windows 登录后自动启动”。自启动项写入当前用户 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，命令形如 `"CtyunHelper.exe" --startup`，不会申请管理员权限；配置文件写入失败时会回滚本次注册表修改，避免注册表与应用状态不一致。手动双击程序仍正常显示主窗口；如果程序已经运行，手动第二次启动只会唤起现有窗口。
 
 日志文件位于 Go `os.UserCacheDir()/CtyunHelper/logs/CtyunHelper.log`（Windows 通常位于用户 LocalAppData 下）。默认单文件最大约 5 MiB，并只保留有限数量的滚动备份；内存日志同样有条目上限。日志窗口只读取这份统一日志来源，不访问或展示 Credential Manager、DPAPI Profile 等敏感存储。
 

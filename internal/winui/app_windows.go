@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/uvwt/CtyunHelper/internal/app"
@@ -24,6 +26,7 @@ const (
 	wmApp                = 0x8000
 	wmTray               = wmApp + 1
 	wmStateChanged       = wmApp + 2
+	wmLogoutCompleted    = wmApp + 3
 	wsOverlappedWindow   = 0x00CF0000
 	wsVisible            = 0x10000000
 	wsChild              = 0x40000000
@@ -50,7 +53,8 @@ const (
 	menuRedeemSettings   = 1005
 	menuSettings         = 1006
 	menuLogs             = 1007
-	menuExit             = 1008
+	menuLogout           = 1008
+	menuExit             = 1009
 	buttonLogin          = 1101
 	buttonBind           = 1102
 	buttonAI             = 1103
@@ -59,6 +63,7 @@ const (
 	buttonRedeemSettings = 1106
 	buttonSettings       = 1107
 	buttonLogs           = 1108
+	buttonLogout         = 1109
 	errorAlreadyExists   = 183
 )
 
@@ -118,36 +123,40 @@ type notifyIconData struct {
 }
 
 var (
-	user32              = syscall.NewLazyDLL("user32.dll")
-	kernel32UI          = syscall.NewLazyDLL("kernel32.dll")
-	shell32             = syscall.NewLazyDLL("shell32.dll")
-	registerClassExW    = user32.NewProc("RegisterClassExW")
-	createWindowExW     = user32.NewProc("CreateWindowExW")
-	defWindowProcW      = user32.NewProc("DefWindowProcW")
-	showWindow          = user32.NewProc("ShowWindow")
-	updateWindow        = user32.NewProc("UpdateWindow")
-	setWindowTextW      = user32.NewProc("SetWindowTextW")
-	enableWindow        = user32.NewProc("EnableWindow")
-	messageBoxW         = user32.NewProc("MessageBoxW")
-	postMessageW        = user32.NewProc("PostMessageW")
-	getMessageW         = user32.NewProc("GetMessageW")
-	translateMessage    = user32.NewProc("TranslateMessage")
-	dispatchMessageW    = user32.NewProc("DispatchMessageW")
-	postQuitMessage     = user32.NewProc("PostQuitMessage")
-	loadIconW           = user32.NewProc("LoadIconW")
-	loadCursorW         = user32.NewProc("LoadCursorW")
-	destroyWindow       = user32.NewProc("DestroyWindow")
-	createPopupMenu     = user32.NewProc("CreatePopupMenu")
-	appendMenuW         = user32.NewProc("AppendMenuW")
-	trackPopupMenu      = user32.NewProc("TrackPopupMenu")
-	destroyMenu         = user32.NewProc("DestroyMenu")
-	getCursorPos        = user32.NewProc("GetCursorPos")
-	setForegroundWindow = user32.NewProc("SetForegroundWindow")
-	findWindowW         = user32.NewProc("FindWindowW")
-	getModuleHandleW    = kernel32UI.NewProc("GetModuleHandleW")
-	createMutexW        = kernel32UI.NewProc("CreateMutexW")
-	closeHandle         = kernel32UI.NewProc("CloseHandle")
-	shellNotifyIconW    = shell32.NewProc("Shell_NotifyIconW")
+	user32               = syscall.NewLazyDLL("user32.dll")
+	kernel32UI           = syscall.NewLazyDLL("kernel32.dll")
+	shell32              = syscall.NewLazyDLL("shell32.dll")
+	shcore               = syscall.NewLazyDLL("shcore.dll")
+	registerClassExW     = user32.NewProc("RegisterClassExW")
+	createWindowExW      = user32.NewProc("CreateWindowExW")
+	defWindowProcW       = user32.NewProc("DefWindowProcW")
+	showWindow           = user32.NewProc("ShowWindow")
+	updateWindow         = user32.NewProc("UpdateWindow")
+	setWindowTextW       = user32.NewProc("SetWindowTextW")
+	enableWindow         = user32.NewProc("EnableWindow")
+	messageBoxW          = user32.NewProc("MessageBoxW")
+	postMessageW         = user32.NewProc("PostMessageW")
+	getMessageW          = user32.NewProc("GetMessageW")
+	translateMessage     = user32.NewProc("TranslateMessage")
+	dispatchMessageW     = user32.NewProc("DispatchMessageW")
+	postQuitMessage      = user32.NewProc("PostQuitMessage")
+	loadIconW            = user32.NewProc("LoadIconW")
+	loadCursorW          = user32.NewProc("LoadCursorW")
+	destroyWindow        = user32.NewProc("DestroyWindow")
+	createPopupMenu      = user32.NewProc("CreatePopupMenu")
+	appendMenuW          = user32.NewProc("AppendMenuW")
+	trackPopupMenu       = user32.NewProc("TrackPopupMenu")
+	destroyMenu          = user32.NewProc("DestroyMenu")
+	getCursorPos         = user32.NewProc("GetCursorPos")
+	setForegroundWindow  = user32.NewProc("SetForegroundWindow")
+	findWindowW          = user32.NewProc("FindWindowW")
+	setProcessDPIAware   = user32.NewProc("SetProcessDPIAware")
+	setProcessDPIContext = user32.NewProc("SetProcessDpiAwarenessContext")
+	setProcessDPI        = shcore.NewProc("SetProcessDpiAwareness")
+	getModuleHandleW     = kernel32UI.NewProc("GetModuleHandleW")
+	createMutexW         = kernel32UI.NewProc("CreateMutexW")
+	closeHandle          = kernel32UI.NewProc("CloseHandle")
+	shellNotifyIconW     = shell32.NewProc("Shell_NotifyIconW")
 )
 
 var (
@@ -161,11 +170,15 @@ var (
 	redeemSettingsButton uintptr
 	settingsButton       uintptr
 	logsButton           uintptr
+	logoutButton         uintptr
 	uiModel              *app.Model
 	uiRuntime            *app.Runtime
+	logoutMu             sync.Mutex
+	logoutRunning        bool
+	logoutErr            error
 )
 
-func Run(buildRuntime func() (*app.Runtime, error)) error {
+func Run(buildRuntime func() (*app.Runtime, error), options RunOptions) error {
 	if buildRuntime == nil {
 		return fmt.Errorf("Windows UI 缺少 Runtime 构造函数")
 	}
@@ -178,12 +191,15 @@ func Run(buildRuntime func() (*app.Runtime, error)) error {
 		defer closeHandle.Call(mutex)
 	}
 	if alreadyRunning {
-		if hwnd, _, _ := findWindowW.Call(uintptr(unsafe.Pointer(className)), 0); hwnd != 0 {
-			showWindow.Call(hwnd, swShow)
-			setForegroundWindow.Call(hwnd)
+		if !options.StartHidden {
+			if hwnd := findExistingMainWindow(className, 2*time.Second); hwnd != 0 {
+				showWindow.Call(hwnd, swShow)
+				setForegroundWindow.Call(hwnd)
+			}
 		}
 		return nil
 	}
+	enableDPIAwareness()
 
 	// 单实例锁必须早于 DeviceCode、Profile、Scheduler 和 Clink 初始化。
 	// 否则用户连续双击 exe 时，第二个进程可能在发现已有窗口前短暂启动
@@ -239,8 +255,10 @@ func Run(buildRuntime func() (*app.Runtime, error)) error {
 		destroyWindow.Call(hwnd)
 		return err
 	}
-	showWindow.Call(hwnd, swShow)
-	updateWindow.Call(hwnd)
+	if !options.StartHidden {
+		showWindow.Call(hwnd, swShow)
+		updateWindow.Call(hwnd)
+	}
 
 	events, unsubscribe := model.Events().Subscribe(16)
 	defer unsubscribe()
@@ -276,6 +294,21 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 			updateStatusText(uiModel.Snapshot())
 		}
 		return 0
+	case wmLogoutCompleted:
+		logoutMu.Lock()
+		err := logoutErr
+		logoutErr = nil
+		logoutRunning = false
+		logoutMu.Unlock()
+		if uiModel != nil {
+			updateStatusText(uiModel.Snapshot())
+		}
+		if err != nil {
+			showMessage(hwnd, "退出账号", err.Error(), mbIconError)
+		} else {
+			showMessage(hwnd, "退出账号", "已退出账号并清除本地登录凭据。", mbInformation)
+		}
+		return 0
 	case wmTray:
 		switch uint32(lParam) {
 		case wmLButtonDblClk:
@@ -308,12 +341,16 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 			openSettingsWindow(hwnd)
 		case buttonLogs, menuLogs:
 			openLogsWindow(hwnd)
+		case buttonLogout, menuLogout:
+			startLogout(hwnd)
 		case menuExit:
+			closeAuxiliaryWindows()
 			removeTrayIcon()
 			destroyWindow.Call(hwnd)
 		}
 		return 0
 	case wmDestroy:
+		closeAuxiliaryWindows()
 		removeTrayIcon()
 		postQuitMessage.Call(0)
 		return 0
@@ -393,6 +430,13 @@ func createActionButtons(hwnd, instance uintptr) {
 		186, 270, 150, 34,
 		hwnd, buttonLogs, instance, 0,
 	)
+	logoutText := utf16Ptr("退出账号")
+	logoutButton, _, _ = createWindowExW.Call(
+		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(logoutText)),
+		wsChild|wsVisible|bsPushButton,
+		348, 270, 150, 34,
+		hwnd, buttonLogout, instance, 0,
+	)
 }
 
 func updateStatusText(state app.State) {
@@ -434,6 +478,18 @@ func updateStatusText(state app.State) {
 			enabled = 0
 		}
 		enableWindow.Call(redeemButton, enabled)
+	}
+	if logoutButton != 0 {
+		enabled := uintptr(0)
+		if state.Account != "" && !jobsRunning {
+			logoutMu.Lock()
+			running := logoutRunning
+			logoutMu.Unlock()
+			if !running {
+				enabled = 1
+			}
+		}
+		enableWindow.Call(logoutButton, enabled)
 	}
 	connection := map[app.ConnectionState]string{
 		app.ConnectionStopped:    "等待启动",
@@ -527,6 +583,51 @@ func startRedeemTask(_ uintptr) {
 	go func() { _ = uiRuntime.RunRedeemTask() }()
 }
 
+func startLogout(owner uintptr) {
+	if uiRuntime == nil || uiModel == nil || uiModel.Snapshot().Account == "" {
+		return
+	}
+	logoutMu.Lock()
+	if logoutRunning {
+		logoutMu.Unlock()
+		return
+	}
+	logoutMu.Unlock()
+	if !confirmLogout(owner) {
+		return
+	}
+
+	logoutMu.Lock()
+	if logoutRunning {
+		logoutMu.Unlock()
+		return
+	}
+	logoutRunning = true
+	logoutMu.Unlock()
+	if logoutButton != 0 {
+		enableWindow.Call(logoutButton, 0)
+	}
+	go func() {
+		err := uiRuntime.Logout()
+		logoutMu.Lock()
+		logoutErr = err
+		logoutMu.Unlock()
+		postMessageW.Call(owner, wmLogoutCompleted, 0, 0)
+	}()
+}
+
+func confirmLogout(owner uintptr) bool {
+	title := utf16Ptr("退出账号")
+	message := utf16Ptr("退出后会停止当前云电脑会话，并删除本机保存的账号密码和登录 Profile。\n\n确定退出账号吗？")
+	result, _, _ := messageBoxW.Call(
+		owner,
+		uintptr(unsafe.Pointer(message)),
+		uintptr(unsafe.Pointer(title)),
+		mbYesNo|mbIconWarning,
+	)
+	return result == idYes
+}
+
 func addTrayIcon(hwnd, icon uintptr) error {
 	tray = notifyIconData{
 		Size:            uint32(unsafe.Sizeof(notifyIconData{})),
@@ -551,6 +652,27 @@ func removeTrayIcon() {
 	}
 }
 
+// enableDPIAwareness 必须在创建任何窗口前调用。Windows 10 1703+ 优先
+// Per-Monitor V2；较旧系统依次降级为 Per-Monitor 和 System DPI aware。
+// DPI API 不可用或宿主已设置 DPI 模式都不是启动失败条件。
+func enableDPIAwareness() {
+	if err := setProcessDPIContext.Find(); err == nil {
+		const dpiAwarenessContextPerMonitorV2 = ^uintptr(3) // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (-4)
+		if result, _, _ := setProcessDPIContext.Call(dpiAwarenessContextPerMonitorV2); result != 0 {
+			return
+		}
+	}
+	if err := setProcessDPI.Find(); err == nil {
+		const processPerMonitorDPIAware = 2
+		if result, _, _ := setProcessDPI.Call(processPerMonitorDPIAware); int32(result) == 0 {
+			return
+		}
+	}
+	if err := setProcessDPIAware.Find(); err == nil {
+		setProcessDPIAware.Call()
+	}
+}
+
 func showTrayMenu(hwnd uintptr) {
 	menu, _, _ := createPopupMenu.Call()
 	if menu == 0 {
@@ -564,6 +686,7 @@ func showTrayMenu(hwnd uintptr) {
 	redeemSettingsText := utf16Ptr("兑换设置")
 	settingsText := utf16Ptr("设置")
 	logsText := utf16Ptr("日志")
+	logoutText := utf16Ptr("退出账号")
 	exitText := utf16Ptr("退出")
 	appendMenuW.Call(menu, mfString, menuOpen, uintptr(unsafe.Pointer(openText)))
 	appendMenuW.Call(menu, mfString, menuRunAI, uintptr(unsafe.Pointer(runAIText)))
@@ -574,6 +697,9 @@ func showTrayMenu(hwnd uintptr) {
 	appendMenuW.Call(menu, mfString, menuRedeemSettings, uintptr(unsafe.Pointer(redeemSettingsText)))
 	appendMenuW.Call(menu, mfString, menuSettings, uintptr(unsafe.Pointer(settingsText)))
 	appendMenuW.Call(menu, mfString, menuLogs, uintptr(unsafe.Pointer(logsText)))
+	if uiModel != nil && uiModel.Snapshot().Account != "" {
+		appendMenuW.Call(menu, mfString, menuLogout, uintptr(unsafe.Pointer(logoutText)))
+	}
 	appendMenuW.Call(menu, mfSeparator, 0, 0)
 	appendMenuW.Call(menu, mfString, menuExit, uintptr(unsafe.Pointer(exitText)))
 
@@ -601,6 +727,20 @@ func acquireSingleInstance() (handle uintptr, alreadyRunning bool, err error) {
 		return handle, true, nil
 	}
 	return handle, false, nil
+}
+
+func findExistingMainWindow(className *uint16, timeout time.Duration) uintptr {
+	deadline := time.Now().Add(timeout)
+	for {
+		hwnd, _, _ := findWindowW.Call(uintptr(unsafe.Pointer(className)), 0)
+		if hwnd != 0 {
+			return hwnd
+		}
+		if timeout <= 0 || !time.Now().Before(deadline) {
+			return 0
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func utf16Ptr(value string) *uint16 {

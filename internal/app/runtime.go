@@ -354,13 +354,13 @@ func (r *Runtime) Logout() error {
 	if err := r.stopSession(ctx); err != nil {
 		return fmt.Errorf("app: 停止云电脑会话: %w", err)
 	}
-	if err := r.auth.Logout(); err != nil {
-		return err
-	}
+	logoutErr := r.auth.Logout()
+	// AuthFlow 会在本地清理部分失败时仍清空当前进程认证态；兑换计划也必须
+	// 同步切到“无账号”，不能因为 Credential/磁盘错误而继续显示为可执行。
 	if r.automation != nil {
 		r.automation.UpdateAccount("")
 	}
-	return nil
+	return logoutErr
 }
 
 func (r *Runtime) stopSession(ctx context.Context) error {

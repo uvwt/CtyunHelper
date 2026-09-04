@@ -26,7 +26,7 @@ func main() {
 }
 
 func run() error {
-	return winui.Run(buildRuntime)
+	return winui.Run(buildRuntime, winui.RunOptions{StartHidden: startupMode(os.Args[1:])})
 }
 
 func buildRuntime() (*app.Runtime, error) {

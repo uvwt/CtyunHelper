@@ -64,7 +64,17 @@ func TestWorkerCompletesClinkHandshakeAndResponses(t *testing.T) {
 			return
 		}
 
+		// 第三方 CtYun 对普通 SendInfo 解析失败只记录后继续收包。先发送一个
+		// 声明超长 payload 的残缺非 REDQ 帧；Worker 不能因此断开，否则后续
+		// 合法 103 请求将收不到 118 响应。
+		malformed := []byte{42, 0, 0xff, 0xff, 0xff, 0x7f, 1, 2, 3}
+		if err := ws.WriteMessage(websocket.BinaryMessage, malformed); err != nil {
+			t.Errorf("write malformed frame: %v", err)
+			return
+		}
+
 		requestUser := Message{Type: 103, Data: []byte("request")}.Marshal(false)
+		requestUser = append(requestUser, 1, 2, 3) // 合法 103 后附损坏尾部，前缀仍必须处理。
 		if err := ws.WriteMessage(websocket.BinaryMessage, requestUser); err != nil {
 			t.Errorf("write type103: %v", err)
 			return

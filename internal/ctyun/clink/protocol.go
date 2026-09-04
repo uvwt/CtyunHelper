@@ -84,7 +84,7 @@ func ParseMessages(buf []byte) ([]Message, error) {
 		if len(buf)-offset < 6 {
 			for _, value := range buf[offset:] {
 				if value != 0 {
-					return nil, fmt.Errorf("clink: 尾部残留 %d 字节不足消息头", len(buf)-offset)
+					return result, fmt.Errorf("clink: 尾部残留 %d 字节不足消息头", len(buf)-offset)
 				}
 			}
 			break
@@ -92,7 +92,7 @@ func ParseMessages(buf []byte) ([]Message, error) {
 		typeID := binary.LittleEndian.Uint16(buf[offset : offset+2])
 		size := int(binary.LittleEndian.Uint32(buf[offset+2 : offset+6]))
 		if size < 0 || size > len(buf)-offset-6 {
-			return nil, fmt.Errorf("clink: 消息 type=%d 声明长度 %d 超出剩余数据", typeID, size)
+			return result, fmt.Errorf("clink: 消息 type=%d 声明长度 %d 超出剩余数据", typeID, size)
 		}
 		data := append([]byte(nil), buf[offset+6:offset+6+size]...)
 		result = append(result, Message{Type: typeID, Data: data})

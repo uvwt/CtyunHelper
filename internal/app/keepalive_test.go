@@ -35,12 +35,10 @@ func TestKeepaliveRunsDesktopResolveAndRealClinkWorker(t *testing.T) {
 			{DesktopID: "7", DesktopName: "测试云电脑", UseStatus: "25"},
 		},
 		connection: desktop.ConnectionInfo{
-			DesktopID:           7,
-			Host:                "desktop.internal",
-			Port:                "7033",
-			ClinkLVSOutHost:     "127.0.0.1:1",
-			Token:               "token",
-			TenantMemberAccount: "member",
+			DesktopID:       7,
+			Host:            "desktop.internal",
+			Port:            "7033",
+			ClinkLVSOutHost: "127.0.0.1:1",
 		},
 	}
 	model := NewModel(State{Account: "account"})

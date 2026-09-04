@@ -3,14 +3,36 @@ package clink
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
+	"reflect"
 	"testing"
 )
 
-func TestInitialPayloadStartsWithREDQ(t *testing.T) {
+func TestInitialPayloadMatchesCtYunVector(t *testing.T) {
 	payload := InitialPayload()
-	if !IsREDQ(payload) {
-		t.Fatalf("initial payload = %x", payload[:4])
+	const expectedHex = "5245445102000000020000001a0000000000000001000100000001000000120000000900000004080000"
+	expected, err := hex.DecodeString(expectedHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(payload, expected) {
+		t.Fatalf("initial payload = %x, want %x", payload, expected)
+	}
+}
+
+func TestProxyHandshakeMatchesCtYunFields(t *testing.T) {
+	got := NewProxyHandshake(
+		"clink.example.test:9443", "desktop.internal", "443",
+		"ca", "cert", "key",
+	)
+	want := ProxyHandshake{
+		Type: 1, SSL: 1, Host: "clink.example.test", Port: "9443",
+		CA: "ca", Cert: "cert", Key: "key",
+		ServerName: "desktop.internal:443", OQS: 0,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("handshake = %#v, want %#v", got, want)
 	}
 }
 
@@ -26,13 +48,38 @@ func TestMessageRoundTrip(t *testing.T) {
 	}
 }
 
+func TestParseMessagesKeepsValidPrefixBeforeBrokenTail(t *testing.T) {
+	buf := (Message{Type: 103, Data: []byte("request")}).Marshal(false)
+	buf = append(buf, 1, 2, 3)
+	messages, err := ParseMessages(buf)
+	if err == nil {
+		t.Fatal("expected broken-tail parse error")
+	}
+	if len(messages) != 1 || messages[0].Type != 103 || !bytes.Equal(messages[0].Data, []byte("request")) {
+		t.Fatalf("valid prefix was lost: %#v", messages)
+	}
+}
+
 func TestBuildUserInfoMessageUsesType118(t *testing.T) {
 	buf, err := BuildUserInfoMessage(123, "user")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := int(buf[0]) | int(buf[1])<<8; got != 118 {
+	const payload = `{"type":1,"userName":"user","userInfo":"","userId":123}`
+	if got := binary.LittleEndian.Uint16(buf[0:2]); got != 118 {
 		t.Fatalf("type = %d", got)
+	}
+	if got := binary.LittleEndian.Uint32(buf[2:6]); got != uint32(8+len(payload)) {
+		t.Fatalf("outer size = %d", got)
+	}
+	if got := binary.LittleEndian.Uint32(buf[6:10]); got != uint32(len(payload)) {
+		t.Fatalf("payload size = %d", got)
+	}
+	if got := binary.LittleEndian.Uint32(buf[10:14]); got != 8 {
+		t.Fatalf("build offset = %d", got)
+	}
+	if got := string(buf[14:]); got != payload {
+		t.Fatalf("payload = %q", got)
 	}
 }
 

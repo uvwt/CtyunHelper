@@ -27,6 +27,7 @@ Windows-only 的天翼云电脑桌面助手。最终目标是单进程、纯 Go�
 - Clink WebSocket 代理握手、初始 REDQ 帧、二进制消息编解码。
 - REDQ RSA/OAEP 风格校验响应，并以独立固定测试向量校验结果。
 - 103 -> 118 用户信息消息响应。
+- 已再次逐项对照第三方 CtYun 当前保活源码：代理握手字段、42 字节初始帧、REDQ SHA-1 OAEP、公钥偏移和 118 framing 均有固定回归断言；未知/残缺普通消息不会错误结束整个 WebSocket 周期。
 - 本地模拟 WebSocket 服务端的 Clink 全链集成测试：代理握手 -> 初始帧 -> REDQ -> 用户信息响应。
 - Safety Policy：AI 2 次/天、真实登录请求 2 次/天、兑换 1 次/天、连续 3 次失败后冷却 6 小时；额度/冷却状态持久化到用户状态目录，重启不会清零。
 - EAI Gateway AES-ECB 解密、IAM Ticket SSO、RSA clientKey、AES sessionKey、Web-Signature 与 SSE Chat 全部已改成 Go 标准库实现。

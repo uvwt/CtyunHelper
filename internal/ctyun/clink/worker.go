@@ -70,13 +70,14 @@ func (w *Worker) Run(ctx context.Context) error {
 		if err := w.session.Transition(StateBackoff, err); err != nil {
 			return err
 		}
-
-		backoff := w.config.ErrorBackoff
 		if err == nil {
-			// 正常周期到时只做很短的重连间隔，避免人为制造长时间离线。
-			backoff = time.Second
+			// 第三方 CtYun 的强制周期结束后立即进入下一轮连接，不额外等待。
+			// runCycle 正常返回只表示 ReconnectInterval 到期；网络/协议错误都会
+			// 带 error 返回并走下面的固定错误退避，因此这里不会形成失败风暴。
+			continue
 		}
-		timer := time.NewTimer(backoff)
+
+		timer := time.NewTimer(w.config.ErrorBackoff)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -181,10 +182,7 @@ func (w *Worker) runCycleWithURL(ctx context.Context, endpoint string) error {
 			continue
 		}
 
-		messages, err := ParseMessages(data)
-		if err != nil {
-			return err
-		}
+		messages, parseErr := ParseMessages(data)
 		for _, message := range messages {
 			if message.Type != 103 {
 				continue
@@ -196,6 +194,12 @@ func (w *Worker) runCycleWithURL(ctx context.Context, endpoint string) error {
 			if err := ws.WriteMessage(websocket.BinaryMessage, userInfo); err != nil {
 				return fmt.Errorf("clink: 发送用户信息: %w", err)
 			}
+		}
+		if parseErr != nil {
+			// CtYun 第三方实现把普通 Clink 消息解析放在独立 try/catch 中：
+			// 单个未知/残缺非 REDQ 尾部不会结束 WebSocket 周期。ParseMessages
+			// 会保留错误前已解析出的完整消息，因此合法 103 仍能先得到 118 响应。
+			continue
 		}
 	}
 }

@@ -54,15 +54,13 @@ func TestDesktopDiscoveryAndConnectUseHostBoundServerNode(t *testing.T) {
 				"data": map[string]any{
 					"goingRetry": false,
 					"desktopInfo": map[string]any{
-						"desktopId":           7,
-						"host":                "desktop.internal",
-						"port":                "7033",
-						"clinkLvsOutHost":     "127.0.0.1:8011",
-						"caCert":              "ca",
-						"clientCert":          "cert",
-						"clientKey":           "key",
-						"token":               "token",
-						"tenantMemberAccount": "member",
+						"desktopId":       7,
+						"host":            "desktop.internal",
+						"port":            "7033",
+						"clinkLvsOutHost": "127.0.0.1:8011",
+						"caCert":          "ca",
+						"clientCert":      "cert",
+						"clientKey":       "key",
 					},
 				},
 			})
@@ -127,7 +125,7 @@ func TestDesktopDiscoveryAndConnectUseHostBoundServerNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if connection.DesktopID != 7 || connection.Token != "token" || connection.TenantMemberAccount != "member" {
+	if connection.DesktopID != 7 || connection.ClinkLVSOutHost != "127.0.0.1:8011" || connection.ClientCert != "cert" {
 		t.Fatalf("connection = %#v", connection)
 	}
 	if got := regionServerDataCalls.Load(); got != 1 {

@@ -5,11 +5,13 @@ package main
 import (
 	"log"
 
+	"github.com/uvwt/CtyunHelper/internal/app"
 	"github.com/uvwt/CtyunHelper/internal/winui"
 )
 
 func main() {
-	if err := winui.Run(); err != nil {
+	model := app.NewModel(app.State{Connection: app.ConnectionAuth})
+	if err := winui.Run(model); err != nil {
 		log.Fatal(err)
 	}
 }

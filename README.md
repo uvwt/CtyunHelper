@@ -18,6 +18,8 @@ Windows-only 的天翼云电脑桌面助手。最终目标是单进程、纯 Go�
 - 天翼原生客户端基础 Header、公开签名、serverNode 签名与登录密码 challenge 算法。
 - `genChallengeData -> captcha -> login` 的纯 Go HTTP 登录链，并有完整 `httptest` 请求测试。
 - `getTicket` 原生签名调用。
+- 当前官方桌面链：`pageDesktop -> queryConnectData -> connect`，按业管 Host 获取并缓存 `serverNode`，使用区域 ServerNode 签名。
+- Windows 连接参数已按官方枚举固定为 `osType=15`、`deviceId=25`，并构造连接监视器 `vdCommand`。
 - 积分任务、积分余额、商品、云电脑列表、兑换接口的纯 Go HTTP Client。
 - Clink 状态机。
 - Clink WebSocket 代理握手、初始 REDQ 帧、二进制消息编解码。
@@ -25,13 +27,17 @@ Windows-only 的天翼云电脑桌面助手。最终目标是单进程、纯 Go�
 - 103 -> 118 用户信息消息响应。
 - 本地模拟 WebSocket 服务端的 Clink 全链集成测试：代理握手 -> 初始帧 -> REDQ -> 用户信息响应。
 - Safety Policy：AI 2 次/天、登录 2 次/天、兑换 1 次/天、连续 3 次失败后冷却 6 小时。
-- Windows GUI subsystem 主程序、单实例 Mutex、主窗口、关闭隐藏、系统托盘及打开/退出菜单。
+- App Keepalive 主链：认证 Profile -> 可用桌面选择 -> 连接数据解析 -> Clink Worker -> 统一 App State。
+- Windows GUI subsystem 主程序、单实例 Mutex、主窗口、关闭隐藏、系统托盘及打开/退出菜单；窗口状态已由 App Model 驱动，不直接访问协议 Client。
 - Windows Credential Manager 与 DPAPI 基础封装。
 - 配置路径、敏感日志字段脱敏基础。
 
-尚未完成的关键项：
+当前验证边界：
 
-- 当前官方客户端的云电脑发现 / `connect` HTTP 链还需要与真实账号做协议验证后接入。
+- Go `getServData` 已直接请求真实天翼服务并确认可取得 `serverNode`；服务端当前同时声明 HTTP 请求加密能力 `2/3`。
+- 当前桌面/连接请求形状已与官方客户端 4.1.0.656 的实际网络日志交叉核对，并有完整 `httptest` 覆盖。
+- HTTP 加密属于协商能力；当前未协商密钥时按官方客户端语义发送明文。若服务端返回 `CTG-RSPDATA-ETYPE`，程序会显式报错，不会把密文误当普通 JSON。
+- 当前没有从官方客户端旧数据库页/WAL 恢复残留登录凭据做测试；真实 `pageDesktop/connect` 将通过本程序自己的正式登录流程验证。
 - Clink Worker 已能完成本地协议集成测试，但**尚未在真实天翼 Clink 服务端连续在线验证**。
 - EAI、自动兑换业务编排、Scheduler 和正式 UI 页面仍待迁移。
 

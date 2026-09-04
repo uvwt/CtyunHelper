@@ -2,8 +2,12 @@
 
 package winui
 
-import "fmt"
+import (
+	"fmt"
 
-func Run() error {
+	"github.com/uvwt/CtyunHelper/internal/app"
+)
+
+func Run(*app.Model) error {
 	return fmt.Errorf("Windows UI 仅支持 Windows")
 }

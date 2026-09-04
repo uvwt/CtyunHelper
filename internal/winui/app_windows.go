@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"syscall"
 	"unsafe"
+
+	"github.com/uvwt/CtyunHelper/internal/app"
 )
 
 const (
@@ -20,6 +22,7 @@ const (
 	wmRButtonUp        = 0x0205
 	wmApp              = 0x8000
 	wmTray             = wmApp + 1
+	wmStateChanged     = wmApp + 2
 	wsOverlappedWindow = 0x00CF0000
 	wsVisible          = 0x10000000
 	wsChild            = 0x40000000
@@ -107,6 +110,8 @@ var (
 	defWindowProcW      = user32.NewProc("DefWindowProcW")
 	showWindow          = user32.NewProc("ShowWindow")
 	updateWindow        = user32.NewProc("UpdateWindow")
+	setWindowTextW      = user32.NewProc("SetWindowTextW")
+	postMessageW        = user32.NewProc("PostMessageW")
 	getMessageW         = user32.NewProc("GetMessageW")
 	translateMessage    = user32.NewProc("TranslateMessage")
 	dispatchMessageW    = user32.NewProc("DispatchMessageW")
@@ -127,9 +132,17 @@ var (
 	shellNotifyIconW    = shell32.NewProc("Shell_NotifyIconW")
 )
 
-var tray notifyIconData
+var (
+	tray       notifyIconData
+	statusText uintptr
+	uiModel    *app.Model
+)
 
-func Run() error {
+func Run(model *app.Model) error {
+	if model == nil {
+		return fmt.Errorf("Windows UI 缺少 App Model")
+	}
+	uiModel = model
 	className := utf16Ptr("CtyunHelperWindow")
 	mutex, alreadyRunning, err := acquireSingleInstance()
 	if err != nil {
@@ -178,12 +191,23 @@ func Run() error {
 		return fmt.Errorf("创建主窗口失败: %w", callErr)
 	}
 	createStatusText(hwnd, instance)
+	updateStatusText(model.Snapshot())
 	if err := addTrayIcon(hwnd, icon); err != nil {
 		destroyWindow.Call(hwnd)
 		return err
 	}
 	showWindow.Call(hwnd, swShow)
 	updateWindow.Call(hwnd)
+
+	events, unsubscribe := model.Events().Subscribe(16)
+	defer unsubscribe()
+	go func() {
+		for event := range events {
+			if event.Type == app.EventStateChanged {
+				postMessageW.Call(hwnd, wmStateChanged, 0, 0)
+			}
+		}
+	}()
 
 	var message msg
 	for {
@@ -203,6 +227,11 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 	switch message {
 	case wmClose:
 		showWindow.Call(hwnd, swHide)
+		return 0
+	case wmStateChanged:
+		if uiModel != nil {
+			updateStatusText(uiModel.Snapshot())
+		}
 		return 0
 	case wmTray:
 		switch uint32(lParam) {
@@ -234,15 +263,45 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 
 func createStatusText(hwnd, instance uintptr) {
 	class := utf16Ptr("STATIC")
-	text := utf16Ptr("CtyunHelper 协议内核已启动。关闭窗口后程序继续驻留托盘。")
-	createWindowExW.Call(
+	text := utf16Ptr("")
+	statusText, _, _ = createWindowExW.Call(
 		0,
 		uintptr(unsafe.Pointer(class)),
 		uintptr(unsafe.Pointer(text)),
 		wsChild|wsVisible|ssLeft,
-		24, 24, 820, 28,
+		24, 24, 820, 120,
 		hwnd, 0, instance, 0,
 	)
+}
+
+func updateStatusText(state app.State) {
+	if statusText == 0 {
+		return
+	}
+	connection := map[app.ConnectionState]string{
+		app.ConnectionStopped:    "等待启动",
+		app.ConnectionConnecting: "正在连接",
+		app.ConnectionOnline:     "在线",
+		app.ConnectionBackoff:    "等待重连",
+		app.ConnectionPaused:     "已暂停",
+		app.ConnectionAuth:       "需要登录",
+		app.ConnectionDeviceBind: "需要绑定设备",
+		app.ConnectionError:      "异常",
+	}[state.Connection]
+	if connection == "" {
+		connection = string(state.Connection)
+	}
+	desktopName := state.DesktopName
+	if desktopName == "" {
+		desktopName = "未选择"
+	}
+	lastError := state.LastError
+	if lastError == "" {
+		lastError = "无"
+	}
+	text := fmt.Sprintf("连接状态：%s\r\n云电脑：%s\r\n当前积分：%d\r\n最近异常：%s", connection, desktopName, state.Points, lastError)
+	ptr := utf16Ptr(text)
+	setWindowTextW.Call(statusText, uintptr(unsafe.Pointer(ptr)))
 }
 
 func addTrayIcon(hwnd, icon uintptr) error {

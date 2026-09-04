@@ -16,15 +16,29 @@ func LoginPassword(password, challengeCode string) string {
 }
 
 func PublicSignature(ctx RequestContext, profile Profile) string {
-	source := NativeDeviceType + ctx.RequestID + itoa(profile.TenantID) + ctx.Timestamp +
-		itoa(profile.UserID) + NativeVersion + profile.SecretKey
+	return PublicSignatureWithIdentity(WindowsIdentity(), ctx, profile)
+}
+
+func PublicSignatureWithIdentity(identity ClientIdentity, ctx RequestContext, profile Profile) string {
+	identity = identity.withDefaults()
+	source := identity.DeviceType + ctx.RequestID + itoa(profile.TenantID) + ctx.Timestamp +
+		itoa(profile.UserID) + identity.Version + profile.SecretKey
 	return strings.ToUpper(SHA256Hex(source))
 }
 
 func ServerNodeSignature(ctx RequestContext, profile Profile, serverNode string) string {
+	return ServerNodeSignatureWithIdentity(WindowsIdentity(), ctx, profile, serverNode)
+}
+
+func ServerNodeSignatureWithIdentity(identity ClientIdentity, ctx RequestContext, profile Profile, serverNode string) string {
+	identity = identity.withDefaults()
 	path := normalizePath(ctx.Path)
-	source := NativeDeviceType + ctx.RequestID + ctx.Timestamp + profile.UserEID +
-		NativeVersion + serverNode + path + profile.SecretKey
+	userIdentity := profile.UserEID
+	if userIdentity == "" {
+		userIdentity = itoa(profile.UserID)
+	}
+	source := identity.DeviceType + ctx.RequestID + ctx.Timestamp + userIdentity +
+		identity.Version + serverNode + path + profile.SecretKey
 	return strings.ToUpper(SHA256Hex(source))
 }
 

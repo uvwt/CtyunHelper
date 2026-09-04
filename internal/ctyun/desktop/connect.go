@@ -21,6 +21,13 @@ type ConnectionInfo struct {
 
 // SessionIdentityBuffer 对应 Clink 握手阶段的二进制会话身份结构。
 // 结构由固定头（desktopId + 四组 length/offset）和四个 NUL 结尾 ASCII 字符串组成。
+func (c ConnectionInfo) Validate() error {
+	if c.DesktopID == 0 || c.Host == "" || c.Port == "" || c.ClinkLVSOutHost == "" || c.Token == "" || c.TenantMemberAccount == "" {
+		return fmt.Errorf("desktop: connect 响应缺少 Clink 必要字段")
+	}
+	return nil
+}
+
 func (c ConnectionInfo) SessionIdentityBuffer(deviceCode string) ([]byte, error) {
 	const (
 		deviceType = "60"

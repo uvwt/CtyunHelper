@@ -75,12 +75,12 @@ func (c *Client) Login(ctx context.Context, account, password, captchaCode strin
 	}
 	form := url.Values{
 		"deviceCode":    {c.device.Code},
-		"deviceName":    {NativeDeviceName},
-		"deviceType":    {NativeDeviceType},
-		"deviceModel":   {NativeDeviceModel},
-		"appVersion":    {NativeAppVersion},
-		"sysVersion":    {NativeSysVersion},
-		"clientVersion": {NativeVersion},
+		"deviceName":    {c.identity.DeviceName},
+		"deviceType":    {c.identity.DeviceType},
+		"deviceModel":   {c.identity.DeviceModel},
+		"appVersion":    {c.identity.AppVersion},
+		"sysVersion":    {c.identity.SysVersion},
+		"clientVersion": {c.identity.Version},
 		"userAccount":   {account},
 		"password":      {LoginPassword(password, challenge.Code)},
 		"challengeId":   {challenge.ID},

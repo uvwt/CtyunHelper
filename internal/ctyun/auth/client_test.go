@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -92,5 +93,16 @@ func TestGetTicketCarriesNativePublicSignature(t *testing.T) {
 	}
 	if ticket != "ticket-value" {
 		t.Fatalf("ticket = %s", ticket)
+	}
+}
+
+func TestAPIErrorClassificationSurvivesWrapping(t *testing.T) {
+	wrappedAuth := fmt.Errorf("desktop: %w", APIError{Code: CodeNoPermissions, Message: "expired"})
+	if !RequiresAuthentication(wrappedAuth) || RequiresDeviceBinding(wrappedAuth) {
+		t.Fatalf("authentication classification failed: %v", wrappedAuth)
+	}
+	wrappedBind := fmt.Errorf("desktop: %w", APIError{Code: CodeDeviceUnbound, Message: "unbind"})
+	if !RequiresDeviceBinding(wrappedBind) || RequiresAuthentication(wrappedBind) {
+		t.Fatalf("binding classification failed: %v", wrappedBind)
 	}
 }

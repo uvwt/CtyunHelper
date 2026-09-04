@@ -32,6 +32,7 @@ type Client struct {
 	http      *http.Client
 	device    DeviceIdentity
 	identity  ClientIdentity
+	profileMu sync.RWMutex
 	profile   *Profile
 	now       func() time.Time
 	random    io.Reader
@@ -69,10 +70,20 @@ func NewClient(device DeviceIdentity, options ClientOptions) *Client {
 }
 
 func (c *Client) UseProfile(profile Profile) {
+	c.profileMu.Lock()
 	c.profile = &profile
+	c.profileMu.Unlock()
+}
+
+func (c *Client) ClearProfile() {
+	c.profileMu.Lock()
+	c.profile = nil
+	c.profileMu.Unlock()
 }
 
 func (c *Client) Profile() (Profile, bool) {
+	c.profileMu.RLock()
+	defer c.profileMu.RUnlock()
 	if c.profile == nil {
 		return Profile{}, false
 	}
@@ -98,8 +109,8 @@ func (c *Client) Identity() ClientIdentity {
 func (c *Client) BaseHeaders() (RequestContext, http.Header, error) {
 	now := c.now()
 	offset := time.Duration(0)
-	if c.profile != nil {
-		offset = c.profile.Offset
+	if profile, ok := c.Profile(); ok {
+		offset = profile.Offset
 	}
 	timestamp := now.Add(-offset).UnixMilli()
 	requestID := now.UnixMilli() + int64(c.tick.Add(1))
@@ -257,7 +268,7 @@ func (c *Client) GetServerData(ctx context.Context, origin string) (ServerData, 
 
 	var headers http.Header
 	var err error
-	if c.profile != nil {
+	if _, ok := c.Profile(); ok {
 		headers, err = c.PublicHeaders(path)
 	} else {
 		_, headers, err = c.BaseHeaders()

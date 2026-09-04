@@ -4,6 +4,7 @@ package storage
 
 import (
 	"fmt"
+	"os"
 	"syscall"
 	"unsafe"
 )
@@ -77,6 +78,9 @@ func LoadCredential(target string) (username, password string, err error) {
 		uintptr(unsafe.Pointer(&value)),
 	)
 	if result == 0 {
+		if errno, ok := callErr.(syscall.Errno); ok && errno == 1168 { // ERROR_NOT_FOUND
+			return "", "", fmt.Errorf("credential: 未保存账号: %w", os.ErrNotExist)
+		}
 		return "", "", fmt.Errorf("credential: 读取 Windows Credential Manager: %w", callErr)
 	}
 	defer credFree.Call(uintptr(unsafe.Pointer(value)))
@@ -97,6 +101,9 @@ func DeleteCredential(target string) error {
 	}
 	result, _, callErr := credDeleteW.Call(uintptr(unsafe.Pointer(targetPtr)), credTypeGeneric, 0)
 	if result == 0 {
+		if errno, ok := callErr.(syscall.Errno); ok && errno == 1168 { // ERROR_NOT_FOUND
+			return nil
+		}
 		return fmt.Errorf("credential: 删除 Windows Credential Manager 条目: %w", callErr)
 	}
 	return nil

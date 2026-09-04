@@ -106,7 +106,7 @@ func NewTaskAutomationWithOptions(model *Model, options TaskAutomationOptions) (
 					}
 					value.applyPointsSnapshot(snapshot)
 				}
-				result, err := options.RedeemJob.Run(ctx)
+				result, err := value.redeemJob.Run(ctx)
 				value.applyRedeemResult(result, err)
 				return err
 			},
@@ -160,8 +160,9 @@ func (a *TaskAutomation) UpdateAccount(account string) {
 	redeemState := a.redeemJob.Snapshot()
 	validationErr := a.redeemJob.Validate()
 	accountMatches := a.redeemJob.Account() != "" && a.redeemJob.Account() == account
+	pending := redeemState.LastAttemptStatus == automation.RedeemAttemptPending
 	a.model.Update(func(state *State) {
-		state.RedeemEnabled = a.redeemJob.Enabled() && validationErr == nil && accountMatches
+		state.RedeemEnabled = a.redeemJob.Enabled() && validationErr == nil && accountMatches && !pending
 		switch {
 		case !a.redeemJob.Enabled():
 			state.RedeemSummary = "未启用"

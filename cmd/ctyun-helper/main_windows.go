@@ -104,7 +104,8 @@ func buildRuntime() (*app.Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	runtime := app.NewRuntime(model, authFlow, keepalive, taskAutomation)
+	redeemSettings := app.NewRedeemSettingsService(paths, pointsClient, taskAutomation, model)
+	runtime := app.NewRuntime(model, authFlow, keepalive, taskAutomation, redeemSettings)
 
 	// Profile 恢复失败不阻止 UI 启动；AuthFlow 已把可操作错误写入 Model，用户可以重新登录。
 	_, _ = runtime.Restore(config.Account)

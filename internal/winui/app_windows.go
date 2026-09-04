@@ -13,47 +13,49 @@ import (
 )
 
 const (
-	csHRedraw          = 0x0002
-	csVRedraw          = 0x0001
-	cwUseDefault       = ^uintptr(0x7fffffff)
-	wmDestroy          = 0x0002
-	wmClose            = 0x0010
-	wmCommand          = 0x0111
-	wmLButtonDblClk    = 0x0203
-	wmRButtonUp        = 0x0205
-	wmApp              = 0x8000
-	wmTray             = wmApp + 1
-	wmStateChanged     = wmApp + 2
-	wsOverlappedWindow = 0x00CF0000
-	wsVisible          = 0x10000000
-	wsChild            = 0x40000000
-	ssLeft             = 0x00000000
-	bsPushButton       = 0x00000000
-	swHide             = 0
-	swShow             = 5
-	colorWindow        = 5
-	idiApplication     = 32512
-	idcArrow           = 32512
-	mfString           = 0x0000
-	mfSeparator        = 0x0800
-	tpmRightButton     = 0x0002
-	tpmReturnCmd       = 0x0100
-	nimAdd             = 0x00000000
-	nimDelete          = 0x00000002
-	nifMessage         = 0x00000001
-	nifIcon            = 0x00000002
-	nifTip             = 0x00000004
-	menuOpen           = 1001
-	menuRunAI          = 1002
-	menuRefreshPoints  = 1003
-	menuRunRedeem      = 1004
-	menuExit           = 1005
-	buttonLogin        = 1101
-	buttonBind         = 1102
-	buttonAI           = 1103
-	buttonPoints       = 1104
-	buttonRedeem       = 1105
-	errorAlreadyExists = 183
+	csHRedraw            = 0x0002
+	csVRedraw            = 0x0001
+	cwUseDefault         = ^uintptr(0x7fffffff)
+	wmDestroy            = 0x0002
+	wmClose              = 0x0010
+	wmCommand            = 0x0111
+	wmLButtonDblClk      = 0x0203
+	wmRButtonUp          = 0x0205
+	wmApp                = 0x8000
+	wmTray               = wmApp + 1
+	wmStateChanged       = wmApp + 2
+	wsOverlappedWindow   = 0x00CF0000
+	wsVisible            = 0x10000000
+	wsChild              = 0x40000000
+	ssLeft               = 0x00000000
+	bsPushButton         = 0x00000000
+	swHide               = 0
+	swShow               = 5
+	colorWindow          = 5
+	idiApplication       = 32512
+	idcArrow             = 32512
+	mfString             = 0x0000
+	mfSeparator          = 0x0800
+	tpmRightButton       = 0x0002
+	tpmReturnCmd         = 0x0100
+	nimAdd               = 0x00000000
+	nimDelete            = 0x00000002
+	nifMessage           = 0x00000001
+	nifIcon              = 0x00000002
+	nifTip               = 0x00000004
+	menuOpen             = 1001
+	menuRunAI            = 1002
+	menuRefreshPoints    = 1003
+	menuRunRedeem        = 1004
+	menuRedeemSettings   = 1005
+	menuExit             = 1006
+	buttonLogin          = 1101
+	buttonBind           = 1102
+	buttonAI             = 1103
+	buttonPoints         = 1104
+	buttonRedeem         = 1105
+	buttonRedeemSettings = 1106
+	errorAlreadyExists   = 183
 )
 
 type wndClassEx struct {
@@ -145,15 +147,16 @@ var (
 )
 
 var (
-	tray         notifyIconData
-	statusText   uintptr
-	loginButton  uintptr
-	bindButton   uintptr
-	aiButton     uintptr
-	pointsButton uintptr
-	redeemButton uintptr
-	uiModel      *app.Model
-	uiRuntime    *app.Runtime
+	tray                 notifyIconData
+	statusText           uintptr
+	loginButton          uintptr
+	bindButton           uintptr
+	aiButton             uintptr
+	pointsButton         uintptr
+	redeemButton         uintptr
+	redeemSettingsButton uintptr
+	uiModel              *app.Model
+	uiRuntime            *app.Runtime
 )
 
 func Run(buildRuntime func() (*app.Runtime, error)) error {
@@ -293,6 +296,8 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 			startPointsTask(hwnd)
 		case buttonRedeem, menuRunRedeem:
 			startRedeemTask(hwnd)
+		case buttonRedeemSettings, menuRedeemSettings:
+			openRedeemSettingsWindow(hwnd)
 		case menuExit:
 			removeTrayIcon()
 			destroyWindow.Call(hwnd)
@@ -356,6 +361,13 @@ func createActionButtons(hwnd, instance uintptr) {
 		wsChild|wsVisible|bsPushButton,
 		642, 225, 165, 34,
 		hwnd, buttonRedeem, instance, 0,
+	)
+	redeemSettingsText := utf16Ptr("兑换设置")
+	redeemSettingsButton, _, _ = createWindowExW.Call(
+		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(redeemSettingsText)),
+		wsChild|wsVisible|bsPushButton,
+		642, 270, 165, 34,
+		hwnd, buttonRedeemSettings, instance, 0,
 	)
 }
 
@@ -525,6 +537,7 @@ func showTrayMenu(hwnd uintptr) {
 	runAIText := utf16Ptr("立即执行 AI 任务")
 	refreshPointsText := utf16Ptr("刷新积分")
 	runRedeemText := utf16Ptr("检查 / 执行兑换")
+	redeemSettingsText := utf16Ptr("兑换设置")
 	exitText := utf16Ptr("退出")
 	appendMenuW.Call(menu, mfString, menuOpen, uintptr(unsafe.Pointer(openText)))
 	appendMenuW.Call(menu, mfString, menuRunAI, uintptr(unsafe.Pointer(runAIText)))
@@ -532,6 +545,7 @@ func showTrayMenu(hwnd uintptr) {
 	if uiModel != nil && uiModel.Snapshot().RedeemEnabled {
 		appendMenuW.Call(menu, mfString, menuRunRedeem, uintptr(unsafe.Pointer(runRedeemText)))
 	}
+	appendMenuW.Call(menu, mfString, menuRedeemSettings, uintptr(unsafe.Pointer(redeemSettingsText)))
 	appendMenuW.Call(menu, mfSeparator, 0, 0)
 	appendMenuW.Call(menu, mfString, menuExit, uintptr(unsafe.Pointer(exitText)))
 

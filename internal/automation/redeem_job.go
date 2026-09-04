@@ -85,13 +85,20 @@ func NewRedeemJob(client redeemClient, guard *Guard, plan RedeemPlan, initial Re
 }
 
 func (j *RedeemJob) Enabled() bool {
-	return j != nil && j.plan.Enabled
+	if j == nil {
+		return false
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.plan.Enabled
 }
 
 func (j *RedeemJob) Account() string {
 	if j == nil {
 		return ""
 	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
 	return strings.TrimSpace(j.plan.Account)
 }
 
@@ -99,7 +106,26 @@ func (j *RedeemJob) Validate() error {
 	if j == nil {
 		return fmt.Errorf("automation: 兑换 Job 未初始化")
 	}
-	return ValidateRedeemPlan(j.plan)
+	j.mu.Lock()
+	plan := cloneRedeemPlan(j.plan)
+	j.mu.Unlock()
+	return ValidateRedeemPlan(plan)
+}
+
+// UpdatePlan 只替换后续运行使用的配置，不修改兑换历史状态。这样用户在
+// 当天成功兑换后修改商品/次数，也不会通过“改配置”绕过当日一次限制；
+// pending 的不确定结果同样继续阻止后续自动兑换。
+func (j *RedeemJob) UpdatePlan(plan RedeemPlan) error {
+	if j == nil {
+		return fmt.Errorf("automation: 兑换 Job 未初始化")
+	}
+	if err := ValidateRedeemPlan(plan); err != nil {
+		return err
+	}
+	j.mu.Lock()
+	j.plan = cloneRedeemPlan(plan)
+	j.mu.Unlock()
+	return nil
 }
 
 func (j *RedeemJob) Snapshot() RedeemState {
@@ -108,22 +134,56 @@ func (j *RedeemJob) Snapshot() RedeemState {
 	return j.state
 }
 
+// ResolvePending 只用于用户已经人工核对服务端结果后的显式恢复。
+// succeeded=true 会把原尝试日记为成功，避免当天再次兑换；false 仍保留
+// LastAttemptDate，因此同一天也不会再次下单，最早下一自然日才可重试。
+func (j *RedeemJob) ResolvePending(succeeded bool) error {
+	if j == nil {
+		return fmt.Errorf("automation: 兑换 Job 未初始化")
+	}
+	j.mu.Lock()
+	if j.state.LastAttemptStatus != RedeemAttemptPending {
+		j.mu.Unlock()
+		return fmt.Errorf("automation: 当前没有待人工确认的兑换")
+	}
+	resolved := j.state
+	if succeeded {
+		resolved.LastAttemptStatus = RedeemAttemptSuccess
+		resolved.LastSuccessDate = resolved.LastAttemptDate
+	} else {
+		resolved.LastAttemptStatus = RedeemAttemptFailed
+	}
+	j.mu.Unlock()
+
+	// 人工确认属于恢复动作，必须先确保磁盘状态写成功再改变进程内状态。
+	// 否则写盘失败后当前进程会认为已解除 pending，而重启又恢复成 pending。
+	if j.save != nil {
+		if err := j.save(resolved); err != nil {
+			return fmt.Errorf("automation: 保存人工确认结果: %w", err)
+		}
+	}
+	j.mu.Lock()
+	j.state = resolved
+	j.mu.Unlock()
+	return nil
+}
+
 func (j *RedeemJob) Run(ctx context.Context) (RedeemResult, error) {
 	if j == nil || j.client == nil || j.guard == nil {
 		return RedeemResult{}, fmt.Errorf("automation: 兑换 Job 依赖未初始化")
 	}
-	if !j.plan.Enabled {
-		return RedeemResult{SkippedReason: "自动兑换未启用"}, nil
-	}
-	if err := ValidateRedeemPlan(j.plan); err != nil {
-		return RedeemResult{}, err
-	}
-
 	j.mu.Lock()
+	plan := cloneRedeemPlan(j.plan)
 	state := j.state
 	j.mu.Unlock()
+	if !plan.Enabled {
+		return RedeemResult{SkippedReason: "自动兑换未启用"}, nil
+	}
+	if err := ValidateRedeemPlan(plan); err != nil {
+		return RedeemResult{}, err
+	}
 	today := j.now().Local()
-	allowed, reason, err := ShouldRedeemToday(j.plan, state, today)
+	allowed, reason, err := ShouldRedeemToday(plan, state, today)
 	if err != nil {
 		return RedeemResult{}, err
 	}
@@ -136,28 +196,28 @@ func (j *RedeemJob) Run(ctx context.Context) (RedeemResult, error) {
 		return RedeemResult{}, fmt.Errorf("automation: 兑换前刷新通用积分: %w", err)
 	}
 	result := RedeemResult{PointsBefore: currentPoints}
-	if currentPoints < j.plan.CostPoints {
-		result.SkippedReason = fmt.Sprintf("当前积分 %d，不足 %d", currentPoints, j.plan.CostPoints)
+	if currentPoints < plan.CostPoints {
+		result.SkippedReason = fmt.Sprintf("当前积分 %d，不足 %d", currentPoints, plan.CostPoints)
 		return result, nil
 	}
 
-	if err := j.verifyDesktop(ctx); err != nil {
+	if err := j.verifyDesktop(ctx, plan); err != nil {
 		return result, err
 	}
-	if err := j.verifyProduct(ctx, today); err != nil {
+	if err := j.verifyProduct(ctx, plan, today); err != nil {
 		return result, err
 	}
 
-	times := currentPoints / j.plan.CostPoints
-	if j.plan.MaxRedeemTimes > 0 && times > j.plan.MaxRedeemTimes {
-		times = j.plan.MaxRedeemTimes
+	times := currentPoints / plan.CostPoints
+	if plan.MaxRedeemTimes > 0 && times > plan.MaxRedeemTimes {
+		times = plan.MaxRedeemTimes
 	}
 	if times <= 0 {
 		result.SkippedReason = "积分不足"
 		return result, nil
 	}
 	result.Times = times
-	result.PointsSpent = times * j.plan.CostPoints
+	result.PointsSpent = times * plan.CostPoints
 
 	// 每日高价值额度必须先持久化成功；失败时绝不能发送 placeOrder。
 	if err := j.guard.Claim(ActionRedeem); err != nil {
@@ -169,11 +229,13 @@ func (j *RedeemJob) Run(ctx context.Context) (RedeemResult, error) {
 	pending := state
 	pending.LastAttemptDate = today.Format("2006-01-02")
 	pending.LastAttemptStatus = RedeemAttemptPending
+	pending.LastRedeemTimes = times
+	pending.LastPointsSpent = result.PointsSpent
 	if err := j.commitState(pending); err != nil {
 		return result, fmt.Errorf("automation: 保存兑换 pending 状态: %w", err)
 	}
 
-	request := BuildOrderRequest(j.plan, times)
+	request := BuildOrderRequest(plan, times)
 	if _, err := j.client.PlaceOrder(ctx, request); err != nil {
 		failed := pending
 		failed.LastAttemptStatus = RedeemAttemptFailed
@@ -304,20 +366,20 @@ func BuildOrderRequest(plan RedeemPlan, times int) points.OrderRequest {
 	}
 }
 
-func (j *RedeemJob) verifyDesktop(ctx context.Context) error {
+func (j *RedeemJob) verifyDesktop(ctx context.Context, plan RedeemPlan) error {
 	desktops, err := j.client.Desktops(ctx)
 	if err != nil {
 		return fmt.Errorf("automation: 兑换前验证云电脑: %w", err)
 	}
 	for _, desktop := range desktops {
-		if desktop.ID() == j.plan.DesktopID {
+		if desktop.ID() == plan.DesktopID {
 			return nil
 		}
 	}
-	return fmt.Errorf("automation: 配置的云电脑 %d 已不存在", j.plan.DesktopID)
+	return fmt.Errorf("automation: 配置的云电脑 %d 已不存在", plan.DesktopID)
 }
 
-func (j *RedeemJob) verifyProduct(ctx context.Context, now time.Time) error {
+func (j *RedeemJob) verifyProduct(ctx context.Context, plan RedeemPlan, now time.Time) error {
 	malls, err := j.client.Products(ctx)
 	if err != nil {
 		return fmt.Errorf("automation: 兑换前验证商品: %w", err)
@@ -325,14 +387,14 @@ func (j *RedeemJob) verifyProduct(ctx context.Context, now time.Time) error {
 	for _, mall := range malls {
 		for _, series := range mall.Series {
 			for _, sku := range series.SKUs {
-				if sku.ProductID != j.plan.ProductID || sku.ProductType != j.plan.ProductType {
+				if sku.ProductID != plan.ProductID || sku.ProductType != plan.ProductType {
 					continue
 				}
 				if sku.Status != 0 && sku.Status != 2 {
 					return fmt.Errorf("automation: 配置商品当前不可兑换，status=%d", sku.Status)
 				}
-				if sku.CostPoints != j.plan.CostPoints {
-					return fmt.Errorf("automation: 商品积分成本已从 %d 变为 %d，需重新确认配置", j.plan.CostPoints, sku.CostPoints)
+				if sku.CostPoints != plan.CostPoints {
+					return fmt.Errorf("automation: 商品积分成本已从 %d 变为 %d，需重新确认配置", plan.CostPoints, sku.CostPoints)
 				}
 				if active, reason := productActiveAt(sku, now); !active {
 					return fmt.Errorf("automation: 配置商品当前不可兑换: %s", reason)
@@ -341,7 +403,13 @@ func (j *RedeemJob) verifyProduct(ctx context.Context, now time.Time) error {
 			}
 		}
 	}
-	return fmt.Errorf("automation: 配置的商品 %d 已不存在", j.plan.ProductID)
+	return fmt.Errorf("automation: 配置的商品 %d 已不存在", plan.ProductID)
+}
+
+func cloneRedeemPlan(plan RedeemPlan) RedeemPlan {
+	result := plan
+	result.MonthlyDays = append([]int(nil), plan.MonthlyDays...)
+	return result
 }
 
 func productActiveAt(sku points.ProductSKU, now time.Time) (bool, string) {

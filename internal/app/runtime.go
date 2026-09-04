@@ -21,6 +21,7 @@ type Runtime struct {
 	auth       *AuthFlow
 	session    SessionRunner
 	automation *TaskAutomation
+	redeem     *RedeemSettingsService
 
 	mu            sync.Mutex
 	rootCtx       context.Context
@@ -30,12 +31,40 @@ type Runtime struct {
 	sessionActive bool
 }
 
-func NewRuntime(model *Model, authFlow *AuthFlow, session SessionRunner, taskAutomation *TaskAutomation) *Runtime {
-	return &Runtime{model: model, auth: authFlow, session: session, automation: taskAutomation}
+func NewRuntime(model *Model, authFlow *AuthFlow, session SessionRunner, taskAutomation *TaskAutomation, redeemSettings *RedeemSettingsService) *Runtime {
+	return &Runtime{model: model, auth: authFlow, session: session, automation: taskAutomation, redeem: redeemSettings}
 }
 
 func (r *Runtime) Model() *Model {
 	return r.model
+}
+
+func (r *Runtime) CurrentRedeemSettings() (RedeemSettingsView, error) {
+	if r.redeem == nil {
+		return RedeemSettingsView{}, fmt.Errorf("app: 兑换设置未初始化")
+	}
+	return r.redeem.Current()
+}
+
+func (r *Runtime) LoadRedeemCatalog(ctx context.Context) (RedeemCatalog, error) {
+	if r.redeem == nil {
+		return RedeemCatalog{}, fmt.Errorf("app: 兑换设置未初始化")
+	}
+	return r.redeem.Catalog(ctx)
+}
+
+func (r *Runtime) SaveRedeemSettings(ctx context.Context, request SaveRedeemSettingsRequest) error {
+	if r.redeem == nil {
+		return fmt.Errorf("app: 兑换设置未初始化")
+	}
+	return r.redeem.Save(ctx, request)
+}
+
+func (r *Runtime) ResolvePendingRedeem(succeeded bool) error {
+	if r.redeem == nil {
+		return fmt.Errorf("app: 兑换设置未初始化")
+	}
+	return r.redeem.ResolvePending(succeeded)
 }
 
 func (r *Runtime) RunAITask() error {

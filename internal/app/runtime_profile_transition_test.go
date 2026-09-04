@@ -52,7 +52,7 @@ func TestRuntimeStopsOldSessionBeforeCommittingNewProfile(t *testing.T) {
 	model := NewModel(State{Account: "old-account", Connection: ConnectionStopped})
 	flow := NewAuthFlow(client, &memoryAccountStore{account: "old-account", profile: old, profileExists: true}, model, nil)
 	session := &profileAwareSession{client: client, started: make(chan struct{}, 1), oldAtStop: make(chan bool, 1)}
-	runtime := NewRuntime(model, flow, session, nil)
+	runtime := NewRuntime(model, flow, session, nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runtime.Start(ctx)
@@ -110,7 +110,7 @@ func TestRuntimeAccountSwitchCannotRaceRunningPointsOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime := NewRuntime(model, nil, nil, tasks)
+	runtime := NewRuntime(model, nil, nil, tasks, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runtime.Start(ctx)

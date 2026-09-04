@@ -514,18 +514,18 @@ func startBindingSubmit(state *bindingDialogState) {
 
 func ensureAuthWindowClasses() error {
 	authClassOnce.Do(func() {
-		if err := registerAuthWindowClass("CtyunHelperLoginWindow", loginWindowProc); err != nil {
+		if err := registerDialogWindowClass("CtyunHelperLoginWindow", loginWindowProc); err != nil {
 			authClassErr = err
 			return
 		}
-		if err := registerAuthWindowClass("CtyunHelperBindingWindow", bindingWindowProc); err != nil {
+		if err := registerDialogWindowClass("CtyunHelperBindingWindow", bindingWindowProc); err != nil {
 			authClassErr = err
 		}
 	})
 	return authClassErr
 }
 
-func registerAuthWindowClass(name string, proc func(uintptr, uint32, uintptr, uintptr) uintptr) error {
+func registerDialogWindowClass(name string, proc func(uintptr, uint32, uintptr, uintptr) uintptr) error {
 	instance, _, _ := getModuleHandleW.Call(0)
 	icon, _, _ := loadIconW.Call(0, idiApplication)
 	cursor, _, _ := loadCursorW.Call(0, idcArrow)

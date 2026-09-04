@@ -48,13 +48,17 @@ const (
 	menuRefreshPoints    = 1003
 	menuRunRedeem        = 1004
 	menuRedeemSettings   = 1005
-	menuExit             = 1006
+	menuSettings         = 1006
+	menuLogs             = 1007
+	menuExit             = 1008
 	buttonLogin          = 1101
 	buttonBind           = 1102
 	buttonAI             = 1103
 	buttonPoints         = 1104
 	buttonRedeem         = 1105
 	buttonRedeemSettings = 1106
+	buttonSettings       = 1107
+	buttonLogs           = 1108
 	errorAlreadyExists   = 183
 )
 
@@ -155,6 +159,8 @@ var (
 	pointsButton         uintptr
 	redeemButton         uintptr
 	redeemSettingsButton uintptr
+	settingsButton       uintptr
+	logsButton           uintptr
 	uiModel              *app.Model
 	uiRuntime            *app.Runtime
 )
@@ -298,6 +304,10 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 			startRedeemTask(hwnd)
 		case buttonRedeemSettings, menuRedeemSettings:
 			openRedeemSettingsWindow(hwnd)
+		case buttonSettings, menuSettings:
+			openSettingsWindow(hwnd)
+		case buttonLogs, menuLogs:
+			openLogsWindow(hwnd)
 		case menuExit:
 			removeTrayIcon()
 			destroyWindow.Call(hwnd)
@@ -368,6 +378,20 @@ func createActionButtons(hwnd, instance uintptr) {
 		wsChild|wsVisible|bsPushButton,
 		642, 270, 165, 34,
 		hwnd, buttonRedeemSettings, instance, 0,
+	)
+	settingsText := utf16Ptr("设置")
+	settingsButton, _, _ = createWindowExW.Call(
+		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(settingsText)),
+		wsChild|wsVisible|bsPushButton,
+		24, 270, 150, 34,
+		hwnd, buttonSettings, instance, 0,
+	)
+	logsText := utf16Ptr("日志")
+	logsButton, _, _ = createWindowExW.Call(
+		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(logsText)),
+		wsChild|wsVisible|bsPushButton,
+		186, 270, 150, 34,
+		hwnd, buttonLogs, instance, 0,
 	)
 }
 
@@ -538,6 +562,8 @@ func showTrayMenu(hwnd uintptr) {
 	refreshPointsText := utf16Ptr("刷新积分")
 	runRedeemText := utf16Ptr("检查 / 执行兑换")
 	redeemSettingsText := utf16Ptr("兑换设置")
+	settingsText := utf16Ptr("设置")
+	logsText := utf16Ptr("日志")
 	exitText := utf16Ptr("退出")
 	appendMenuW.Call(menu, mfString, menuOpen, uintptr(unsafe.Pointer(openText)))
 	appendMenuW.Call(menu, mfString, menuRunAI, uintptr(unsafe.Pointer(runAIText)))
@@ -546,6 +572,8 @@ func showTrayMenu(hwnd uintptr) {
 		appendMenuW.Call(menu, mfString, menuRunRedeem, uintptr(unsafe.Pointer(runRedeemText)))
 	}
 	appendMenuW.Call(menu, mfString, menuRedeemSettings, uintptr(unsafe.Pointer(redeemSettingsText)))
+	appendMenuW.Call(menu, mfString, menuSettings, uintptr(unsafe.Pointer(settingsText)))
+	appendMenuW.Call(menu, mfString, menuLogs, uintptr(unsafe.Pointer(logsText)))
 	appendMenuW.Call(menu, mfSeparator, 0, 0)
 	appendMenuW.Call(menu, mfString, menuExit, uintptr(unsafe.Pointer(exitText)))
 

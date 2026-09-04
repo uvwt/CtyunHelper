@@ -8,10 +8,17 @@ import (
 	"time"
 
 	"github.com/uvwt/CtyunHelper/internal/ctyun/auth"
+	"github.com/uvwt/CtyunHelper/internal/logging"
 )
 
 type SessionRunner interface {
 	Run(context.Context) error
+}
+
+type RuntimeOptions struct {
+	RedeemSettings *RedeemSettingsService
+	Settings       *SettingsService
+	Logger         *logging.Logger
 }
 
 // Runtime 是 UI 唯一需要调用的 App 命令入口。它负责登录流程和一个长期保活会话，
@@ -22,6 +29,8 @@ type Runtime struct {
 	session    SessionRunner
 	automation *TaskAutomation
 	redeem     *RedeemSettingsService
+	settings   *SettingsService
+	logger     *logging.Logger
 
 	mu            sync.Mutex
 	rootCtx       context.Context
@@ -31,12 +40,49 @@ type Runtime struct {
 	sessionActive bool
 }
 
-func NewRuntime(model *Model, authFlow *AuthFlow, session SessionRunner, taskAutomation *TaskAutomation, redeemSettings *RedeemSettingsService) *Runtime {
-	return &Runtime{model: model, auth: authFlow, session: session, automation: taskAutomation, redeem: redeemSettings}
+func NewRuntime(model *Model, authFlow *AuthFlow, session SessionRunner, taskAutomation *TaskAutomation, options RuntimeOptions) *Runtime {
+	runtime := &Runtime{
+		model: model, auth: authFlow, session: session, automation: taskAutomation,
+		redeem: options.RedeemSettings, settings: options.Settings, logger: options.Logger,
+	}
+	if runtime.logger != nil && model != nil {
+		runtime.logger.SetOnEntry(func(entry logging.Entry) {
+			model.Events().Publish(Event{Type: EventLogAdded, Data: entry})
+		})
+	}
+	return runtime
 }
 
 func (r *Runtime) Model() *Model {
 	return r.model
+}
+
+func (r *Runtime) CurrentSettings() (GeneralSettings, error) {
+	if r.settings == nil {
+		return GeneralSettings{}, fmt.Errorf("app: 通用设置未初始化")
+	}
+	return r.settings.Current()
+}
+
+func (r *Runtime) SaveSettings(settings GeneralSettings) error {
+	if r.settings == nil {
+		return fmt.Errorf("app: 通用设置未初始化")
+	}
+	return r.settings.Save(settings)
+}
+
+func (r *Runtime) LogSnapshot(limit int) []logging.Entry {
+	if r.logger == nil {
+		return nil
+	}
+	return r.logger.Snapshot(limit)
+}
+
+func (r *Runtime) LogPath() string {
+	if r.logger == nil {
+		return ""
+	}
+	return r.logger.Path()
 }
 
 func (r *Runtime) CurrentRedeemSettings() (RedeemSettingsView, error) {
@@ -132,6 +178,11 @@ func (r *Runtime) Start(parent context.Context) {
 	r.rootCtx, r.rootCancel = context.WithCancel(parent)
 	rootCtx := r.rootCtx
 	r.mu.Unlock()
+	if r.logger != nil && r.model != nil {
+		events, unsubscribe := r.model.Events().Subscribe(64)
+		go r.observeState(rootCtx, r.model.Snapshot(), events, unsubscribe)
+		r.logger.Info("app", "Runtime 启动")
+	}
 	if r.automation != nil {
 		r.automation.Start(rootCtx)
 	}
@@ -139,6 +190,9 @@ func (r *Runtime) Start(parent context.Context) {
 }
 
 func (r *Runtime) Stop() {
+	if r.logger != nil {
+		r.logger.Info("app", "Runtime 停止")
+	}
 	r.mu.Lock()
 	if r.sessionCancel != nil {
 		r.sessionCancel()
@@ -147,6 +201,9 @@ func (r *Runtime) Stop() {
 		r.rootCancel()
 	}
 	r.mu.Unlock()
+	if r.logger != nil {
+		_ = r.logger.Close()
+	}
 }
 
 func (r *Runtime) StartSession() {

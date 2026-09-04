@@ -4,6 +4,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/uvwt/CtyunHelper/internal/app"
@@ -12,6 +14,7 @@ import (
 	"github.com/uvwt/CtyunHelper/internal/ctyun/desktop"
 	"github.com/uvwt/CtyunHelper/internal/ctyun/eai"
 	"github.com/uvwt/CtyunHelper/internal/ctyun/points"
+	"github.com/uvwt/CtyunHelper/internal/logging"
 	"github.com/uvwt/CtyunHelper/internal/storage"
 	"github.com/uvwt/CtyunHelper/internal/winui"
 )
@@ -105,7 +108,24 @@ func buildRuntime() (*app.Runtime, error) {
 		return nil, err
 	}
 	redeemSettings := app.NewRedeemSettingsService(paths, pointsClient, taskAutomation, model)
-	runtime := app.NewRuntime(model, authFlow, keepalive, taskAutomation, redeemSettings)
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("获取程序路径: %w", err)
+	}
+	startup, err := storage.NewStartup(executable)
+	if err != nil {
+		return nil, err
+	}
+	settings := app.NewSettingsService(paths, startup, model)
+	logger, err := logging.New(logging.Options{Path: filepath.Join(paths.LogDir, "CtyunHelper.log")})
+	if err != nil {
+		return nil, err
+	}
+	runtime := app.NewRuntime(model, authFlow, keepalive, taskAutomation, app.RuntimeOptions{
+		RedeemSettings: redeemSettings,
+		Settings:       settings,
+		Logger:         logger,
+	})
 
 	// Profile 恢复失败不阻止 UI 启动；AuthFlow 已把可操作错误写入 Model，用户可以重新登录。
 	_, _ = runtime.Restore(config.Account)

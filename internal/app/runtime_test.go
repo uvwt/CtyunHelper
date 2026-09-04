@@ -54,7 +54,7 @@ func TestRuntimeStartsOnlyOneSessionForRestoredBoundProfile(t *testing.T) {
 		t.Fatalf("restore=%v err=%v", restored, err)
 	}
 	session := &blockingSession{}
-	runtime := NewRuntime(model, flow, session, nil, nil)
+	runtime := NewRuntime(model, flow, session, nil, RuntimeOptions{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runtime.Start(ctx)
@@ -78,7 +78,7 @@ func TestRuntimeDoesNotStartUnboundSession(t *testing.T) {
 	model := NewModel(State{Connection: ConnectionDeviceBind})
 	flow := NewAuthFlow(client, store, model, nil)
 	session := &blockingSession{}
-	runtime := NewRuntime(model, flow, session, nil, nil)
+	runtime := NewRuntime(model, flow, session, nil, RuntimeOptions{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runtime.Start(ctx)
@@ -118,7 +118,7 @@ func TestRuntimeSwitchAccountStopsOldSessionBeforeStartingNewOne(t *testing.T) {
 	model := NewModel(State{Account: "old-account", Connection: ConnectionStopped})
 	flow := NewAuthFlow(client, store, model, nil)
 	session := &switchingSession{started: make(chan int32, 4)}
-	runtime := NewRuntime(model, flow, session, nil, nil)
+	runtime := NewRuntime(model, flow, session, nil, RuntimeOptions{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runtime.Start(ctx)
@@ -155,7 +155,7 @@ func TestRuntimeSwitchAccountStopsOldSessionBeforeStartingNewOne(t *testing.T) {
 
 func TestRuntimeRejectsAccountSwitchWhileAIJobIsRunning(t *testing.T) {
 	model := NewModel(State{Account: "old-account", AITask: JobStatus{Running: true}})
-	runtime := NewRuntime(model, nil, nil, nil, nil)
+	runtime := NewRuntime(model, nil, nil, nil, RuntimeOptions{})
 	_, err := runtime.CompleteLogin(
 		context.Background(),
 		"new-account",

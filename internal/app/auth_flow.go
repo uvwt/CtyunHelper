@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/uvwt/CtyunHelper/internal/automation"
 	"github.com/uvwt/CtyunHelper/internal/ctyun/auth"
 )
 
@@ -25,10 +26,11 @@ type AuthFlow struct {
 	client *auth.Client
 	store  accountStore
 	model  *Model
+	guard  *automation.Guard
 }
 
-func NewAuthFlow(client *auth.Client, store accountStore, model *Model) *AuthFlow {
-	return &AuthFlow{client: client, store: store, model: model}
+func NewAuthFlow(client *auth.Client, store accountStore, model *Model, guard *automation.Guard) *AuthFlow {
+	return &AuthFlow{client: client, store: store, model: model, guard: guard}
 }
 
 func (f *AuthFlow) Restore(account string) (bool, error) {
@@ -66,36 +68,52 @@ func (f *AuthFlow) BeginLogin(ctx context.Context, account string) (auth.LoginCh
 	if account == "" {
 		return auth.LoginChallenge{}, fmt.Errorf("app: 账号不能为空")
 	}
-	f.model.Update(func(state *State) {
-		state.Account = account
-		state.Connection = ConnectionAuth
-		state.LastError = ""
-	})
-	challenge, err := f.client.BeginLogin(ctx, account)
-	if err != nil {
-		f.setAuthError(err)
-	}
-	return challenge, err
+	// challenge/captcha 属于候选账号的临时流程，不应提前覆盖当前 Model。
+	// 已登录用户即使刷新新账号验证码失败，旧账号与旧 Clink 会话也保持不变。
+	return f.client.BeginLogin(ctx, account)
 }
 
 func (f *AuthFlow) CompleteLogin(ctx context.Context, account, password, captchaCode string, challenge auth.LoginChallenge) (auth.Profile, error) {
+	if f.guard != nil {
+		if err := f.guard.Claim(automation.ActionLogin); err != nil {
+			wrapped := fmt.Errorf("app: 登录被保守策略阻止: %w", err)
+			f.setLoginError(wrapped)
+			return auth.Profile{}, wrapped
+		}
+	}
 	profile, err := f.client.Login(ctx, account, password, captchaCode, challenge)
 	if err != nil {
-		f.setAuthError(err)
+		if f.guard != nil {
+			if safetyErr := f.guard.RecordFailure(); safetyErr != nil {
+				err = errors.Join(err, safetyErr)
+			}
+		}
+		f.setLoginError(err)
 		return auth.Profile{}, err
 	}
+
+	// 服务端登录成功后先把安全额度提交。失败时不写新账号凭据，也不覆盖当前 Profile。
+	if f.guard != nil {
+		if err := f.guard.RecordSuccess(); err != nil {
+			f.setLoginError(err)
+			return profile, fmt.Errorf("app: 保存登录保护状态: %w", err)
+		}
+	}
 	if err := f.store.SaveLogin(account, password); err != nil {
-		f.setAuthError(err)
+		f.setLoginError(err)
 		return auth.Profile{}, fmt.Errorf("app: 保存 Windows 凭据: %w", err)
 	}
 	if err := f.store.SaveProfile(account, profile); err != nil {
-		f.setAuthError(err)
+		f.setLoginError(err)
 		return auth.Profile{}, fmt.Errorf("app: 保存认证 Profile: %w", err)
 	}
 	if err := f.store.SaveAccount(account); err != nil {
-		f.setAuthError(err)
+		f.setLoginError(err)
 		return auth.Profile{}, fmt.Errorf("app: 保存账号配置: %w", err)
 	}
+
+	// 到这里候选登录才正式成为当前账号。低层 Login 不直接修改 Client Profile。
+	f.client.UseProfile(profile)
 	f.model.Update(func(state *State) {
 		state.Account = account
 		state.LastError = ""
@@ -106,6 +124,18 @@ func (f *AuthFlow) CompleteLogin(ctx context.Context, account, password, captcha
 		}
 	})
 	return profile, nil
+}
+
+func (f *AuthFlow) setLoginError(err error) {
+	// 更换账号失败只属于候选登录流程。只要当前 Profile 仍有效，就让旧账号和
+	// 旧 Clink 会话继续工作；登录窗口本身会直接展示候选流程错误。
+	if _, ok := f.client.Profile(); ok {
+		return
+	}
+	f.model.Update(func(state *State) {
+		state.Connection = ConnectionAuth
+		state.LastError = err.Error()
+	})
 }
 
 func (f *AuthFlow) BeginDeviceBinding(ctx context.Context) (auth.DeviceBindingChallenge, error) {
@@ -125,19 +155,17 @@ func (f *AuthFlow) SendDeviceSMS(ctx context.Context, captchaCode, captchaKey st
 }
 
 func (f *AuthFlow) CompleteDeviceBinding(ctx context.Context, smsCode, smsKey string) error {
-	if err := f.client.BindDevice(ctx, smsCode, smsKey); err != nil {
+	profile, err := f.client.BindDevice(ctx, smsCode, smsKey)
+	if err != nil {
 		f.setAuthError(err)
 		return err
-	}
-	profile, ok := f.client.Profile()
-	if !ok {
-		return fmt.Errorf("app: 设备绑定后认证 Profile 丢失")
 	}
 	account := f.model.Snapshot().Account
 	if err := f.store.SaveProfile(account, profile); err != nil {
 		f.setAuthError(err)
 		return fmt.Errorf("app: 保存绑定后的 Profile: %w", err)
 	}
+	f.client.UseProfile(profile)
 	f.model.Update(func(state *State) {
 		state.Connection = ConnectionStopped
 		state.LastError = ""
@@ -185,8 +213,16 @@ func (f *AuthFlow) setAuthError(err error) {
 		})
 		return
 	}
+	if auth.RequiresAuthentication(err) {
+		f.model.Update(func(state *State) {
+			state.Connection = ConnectionAuth
+			state.LastError = err.Error()
+		})
+		return
+	}
+	// 普通网络/协议错误不代表登录态失效。尤其在设备绑定阶段，不能因为
+	// 一次验证码请求超时就把用户从“需要绑定设备”错误踢回登录页。
 	f.model.Update(func(state *State) {
-		state.Connection = ConnectionAuth
 		state.LastError = err.Error()
 	})
 }

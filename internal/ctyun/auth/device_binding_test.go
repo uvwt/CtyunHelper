@@ -78,12 +78,16 @@ func TestDeviceBindingFollowsOfficialFlow(t *testing.T) {
 	if smsKey != "sms-key" {
 		t.Fatalf("sms key = %q", smsKey)
 	}
-	if err := client.BindDevice(context.Background(), "567890", smsKey); err != nil {
+	bound, err := client.BindDevice(context.Background(), "567890", smsKey)
+	if err != nil {
 		t.Fatal(err)
 	}
-	updated, ok := client.Profile()
-	if !ok || !updated.BondedDevice {
-		t.Fatalf("profile bonded = %v, ok=%v", updated.BondedDevice, ok)
+	if !bound.BondedDevice {
+		t.Fatalf("candidate profile bonded = %v", bound.BondedDevice)
+	}
+	current, ok := client.Profile()
+	if !ok || current.BondedDevice {
+		t.Fatalf("low-level binding must not commit profile before app persistence: bonded=%v ok=%v", current.BondedDevice, ok)
 	}
 }
 

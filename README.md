@@ -13,10 +13,12 @@ Windows-only 的天翼云电脑桌面助手。最终目标是单进程、纯 Go�
 
 ## 当前开发状态
 
-首个开发基线已经实现：
+当前已经实现：
 
 - 天翼原生客户端基础 Header、公开签名、serverNode 签名与登录密码 challenge 算法。
 - `genChallengeData -> captcha -> login` 的纯 Go HTTP 登录链，并有完整 `httptest` 请求测试。
+- 官方原生设备绑定链：设备验证码 -> 短信验证码 -> 绑定，字段与 4.1.0.656 客户端实现保持一致。
+- 账号密码保存到 Windows Credential Manager，Auth Profile 通过 DPAPI 保护后落盘；网络错误不会触发清 Profile / 重登录。
 - `getTicket` 原生签名调用。
 - 当前官方桌面链：`pageDesktop -> queryConnectData -> connect`，按业管 Host 获取并缓存 `serverNode`，使用区域 ServerNode 签名。
 - Windows 连接参数已按官方枚举固定为 `osType=15`、`deviceId=25`，并构造连接监视器 `vdCommand`。
@@ -26,10 +28,13 @@ Windows-only 的天翼云电脑桌面助手。最终目标是单进程、纯 Go�
 - REDQ RSA/OAEP 风格校验响应，并以独立固定测试向量校验结果。
 - 103 -> 118 用户信息消息响应。
 - 本地模拟 WebSocket 服务端的 Clink 全链集成测试：代理握手 -> 初始帧 -> REDQ -> 用户信息响应。
-- Safety Policy：AI 2 次/天、登录 2 次/天、兑换 1 次/天、连续 3 次失败后冷却 6 小时。
+- Safety Policy：AI 2 次/天、真实登录请求 2 次/天、兑换 1 次/天、连续 3 次失败后冷却 6 小时；额度/冷却状态持久化到用户状态目录，重启不会清零。
+- EAI Gateway AES-ECB 解密、IAM Ticket SSO、RSA clientKey、AES sessionKey、Web-Signature 与 SSE Chat 全部已改成 Go 标准库实现。
+- AI 积分任务编排：任务完成时不发送；真正发送前才占用每日额度；一次运行只发送一次对话，积分延迟期间只轮询状态。
+- 进程内 Scheduler：默认 AI 任务 03:00 / 20:00，支持手动执行、不重入、记录 LastRun/NextRun/LastError；Windows 睡眠恢复不会批量补跑错过任务。
 - App Keepalive 主链：认证 Profile -> 可用桌面选择 -> 连接数据解析 -> Clink Worker -> 统一 App State。
-- Windows GUI subsystem 主程序、单实例 Mutex、主窗口、关闭隐藏、系统托盘及打开/退出菜单；窗口状态已由 App Model 驱动，不直接访问协议 Client。
-- Windows Credential Manager 与 DPAPI 基础封装。
+- Windows GUI subsystem 主程序、单实例 Mutex、主窗口、关闭隐藏、系统托盘；登录和设备绑定使用独立原生窗口，验证码只在内存中显示。
+- 主窗口与托盘可手动执行 AI 任务，连接状态与 AI Scheduler 状态都由 App Model 驱动，不直接访问协议 Client。
 - 配置路径、敏感日志字段脱敏基础。
 
 当前验证边界：
@@ -39,7 +44,8 @@ Windows-only 的天翼云电脑桌面助手。最终目标是单进程、纯 Go�
 - HTTP 加密属于协商能力；当前未协商密钥时按官方客户端语义发送明文。若服务端返回 `CTG-RSPDATA-ETYPE`，程序会显式报错，不会把密文误当普通 JSON。
 - 当前没有从官方客户端旧数据库页/WAL 恢复残留登录凭据做测试；真实 `pageDesktop/connect` 将通过本程序自己的正式登录流程验证。
 - Clink Worker 已能完成本地协议集成测试，但**尚未在真实天翼 Clink 服务端连续在线验证**。
-- EAI、自动兑换业务编排、Scheduler 和正式 UI 页面仍待迁移。
+- Go EAI 已通过本地 Gateway -> RSA SSO -> AES sessionKey -> tenant/model -> signed SSE chat 全链测试；尚未用 CtyunHelper 自身登录态做真实 EAI 服务端验证。
+- 自动兑换业务编排、积分刷新 Job、完整概览/任务/兑换/日志/设置页面仍待完善。
 
 只有在不运行 `CtYun.dll` 的情况下，纯 Go 版本真实连续在线并由天翼服务端确认“使用1小时”任务完成，才视为完成对第三方保活程序的替代。
 
@@ -52,8 +58,8 @@ internal/ctyun/auth    登录、Profile、签名与 Ticket
 internal/ctyun/desktop 云电脑与 Clink 连接参数模型
 internal/ctyun/clink   Clink 状态机、WebSocket、编解码与 REDQ
 internal/ctyun/points  积分 HTTP 协议
-internal/ctyun/eai     EAI 协议迁移边界（待实现）
-internal/automation    调度与保守策略
+internal/ctyun/eai     Gateway、Ticket SSO、签名与 SSE Chat
+internal/automation    AI Job、Scheduler 与保守策略
 internal/storage       配置、Credential Manager、DPAPI
 internal/logging       日志脱敏与后续滚动日志
 internal/winui         Windows 原生窗口、托盘与系统集成

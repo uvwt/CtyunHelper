@@ -114,7 +114,8 @@ func (c *Client) Login(ctx context.Context, account, password, captchaCode strin
 	if err != nil {
 		return Profile{}, err
 	}
-	c.UseProfile(profile)
+	// 这里只验证服务端登录并返回候选 Profile。真正切换当前账号由 App
+	// 在凭据、Profile 缓存和安全状态都成功持久化后统一提交，避免半切换。
 	return profile, nil
 }
 

@@ -3,6 +3,7 @@
 package winui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"syscall"
@@ -27,6 +28,7 @@ const (
 	wsVisible          = 0x10000000
 	wsChild            = 0x40000000
 	ssLeft             = 0x00000000
+	bsPushButton       = 0x00000000
 	swHide             = 0
 	swShow             = 5
 	colorWindow        = 5
@@ -42,7 +44,11 @@ const (
 	nifIcon            = 0x00000002
 	nifTip             = 0x00000004
 	menuOpen           = 1001
-	menuExit           = 1002
+	menuRunAI          = 1002
+	menuExit           = 1003
+	buttonLogin        = 1101
+	buttonBind         = 1102
+	buttonAI           = 1103
 	errorAlreadyExists = 183
 )
 
@@ -111,6 +117,8 @@ var (
 	showWindow          = user32.NewProc("ShowWindow")
 	updateWindow        = user32.NewProc("UpdateWindow")
 	setWindowTextW      = user32.NewProc("SetWindowTextW")
+	enableWindow        = user32.NewProc("EnableWindow")
+	messageBoxW         = user32.NewProc("MessageBoxW")
 	postMessageW        = user32.NewProc("PostMessageW")
 	getMessageW         = user32.NewProc("GetMessageW")
 	translateMessage    = user32.NewProc("TranslateMessage")
@@ -133,16 +141,19 @@ var (
 )
 
 var (
-	tray       notifyIconData
-	statusText uintptr
-	uiModel    *app.Model
+	tray        notifyIconData
+	statusText  uintptr
+	loginButton uintptr
+	bindButton  uintptr
+	aiButton    uintptr
+	uiModel     *app.Model
+	uiRuntime   *app.Runtime
 )
 
-func Run(model *app.Model) error {
-	if model == nil {
-		return fmt.Errorf("Windows UI 缺少 App Model")
+func Run(buildRuntime func() (*app.Runtime, error)) error {
+	if buildRuntime == nil {
+		return fmt.Errorf("Windows UI 缺少 Runtime 构造函数")
 	}
-	uiModel = model
 	className := utf16Ptr("CtyunHelperWindow")
 	mutex, alreadyRunning, err := acquireSingleInstance()
 	if err != nil {
@@ -158,6 +169,22 @@ func Run(model *app.Model) error {
 		}
 		return nil
 	}
+
+	// 单实例锁必须早于 DeviceCode、Profile、Scheduler 和 Clink 初始化。
+	// 否则用户连续双击 exe 时，第二个进程可能在发现已有窗口前短暂启动
+	// 第二条 Clink 会话，首次运行时甚至可能并发生成两份设备身份。
+	runtime, err := buildRuntime()
+	if err != nil {
+		return err
+	}
+	if runtime == nil || runtime.Model() == nil {
+		return fmt.Errorf("Windows UI 缺少 App Runtime")
+	}
+	uiRuntime = runtime
+	model := runtime.Model()
+	uiModel = model
+	runtime.Start(context.Background())
+	defer runtime.Stop()
 
 	title := utf16Ptr("天翼云电脑助手")
 	instance, _, _ := getModuleHandleW.Call(0)
@@ -191,6 +218,7 @@ func Run(model *app.Model) error {
 		return fmt.Errorf("创建主窗口失败: %w", callErr)
 	}
 	createStatusText(hwnd, instance)
+	createActionButtons(hwnd, instance)
 	updateStatusText(model.Snapshot())
 	if err := addTrayIcon(hwnd, icon); err != nil {
 		destroyWindow.Call(hwnd)
@@ -247,6 +275,14 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 		case menuOpen:
 			showWindow.Call(hwnd, swShow)
 			setForegroundWindow.Call(hwnd)
+		case buttonLogin:
+			openLoginWindow(hwnd)
+		case buttonBind:
+			if uiModel != nil && uiModel.Snapshot().Connection == app.ConnectionDeviceBind {
+				openBindingWindow(hwnd)
+			}
+		case buttonAI, menuRunAI:
+			startAITask(hwnd)
 		case menuExit:
 			removeTrayIcon()
 			destroyWindow.Call(hwnd)
@@ -274,9 +310,55 @@ func createStatusText(hwnd, instance uintptr) {
 	)
 }
 
+func createActionButtons(hwnd, instance uintptr) {
+	class := utf16Ptr("BUTTON")
+	loginText := utf16Ptr("登录 / 更换账号")
+	loginButton, _, _ = createWindowExW.Call(
+		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(loginText)),
+		wsChild|wsVisible|bsPushButton,
+		24, 165, 150, 34,
+		hwnd, buttonLogin, instance, 0,
+	)
+	bindText := utf16Ptr("完成设备绑定")
+	bindButton, _, _ = createWindowExW.Call(
+		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(bindText)),
+		wsChild|wsVisible|bsPushButton,
+		186, 165, 150, 34,
+		hwnd, buttonBind, instance, 0,
+	)
+	aiText := utf16Ptr("立即执行 AI 任务")
+	aiButton, _, _ = createWindowExW.Call(
+		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(aiText)),
+		wsChild|wsVisible|bsPushButton,
+		348, 165, 150, 34,
+		hwnd, buttonAI, instance, 0,
+	)
+}
+
 func updateStatusText(state app.State) {
 	if statusText == 0 {
 		return
+	}
+	if loginButton != 0 {
+		enabled := uintptr(1)
+		if state.AITask.Running {
+			enabled = 0
+		}
+		enableWindow.Call(loginButton, enabled)
+	}
+	if bindButton != 0 {
+		enabled := uintptr(0)
+		if state.Connection == app.ConnectionDeviceBind {
+			enabled = 1
+		}
+		enableWindow.Call(bindButton, enabled)
+	}
+	if aiButton != 0 {
+		enabled := uintptr(1)
+		if state.AutomationPaused || state.Connection == app.ConnectionAuth || state.Connection == app.ConnectionDeviceBind || state.AITask.Running {
+			enabled = 0
+		}
+		enableWindow.Call(aiButton, enabled)
 	}
 	connection := map[app.ConnectionState]string{
 		app.ConnectionStopped:    "等待启动",
@@ -299,9 +381,35 @@ func updateStatusText(state app.State) {
 	if lastError == "" {
 		lastError = "无"
 	}
-	text := fmt.Sprintf("连接状态：%s\r\n云电脑：%s\r\n当前积分：%d\r\n最近异常：%s", connection, desktopName, state.Points, lastError)
+	aiStatus := "等待"
+	if state.AutomationPaused {
+		aiStatus = "已暂停"
+	} else if state.AITask.Running {
+		aiStatus = "运行中"
+	}
+	nextAI := "未安排"
+	if !state.AITask.NextRun.IsZero() {
+		nextAI = state.AITask.NextRun.Format("01-02 15:04")
+	}
+	aiError := state.AITask.LastError
+	if aiError == "" {
+		aiError = "无"
+	}
+	text := fmt.Sprintf(
+		"连接状态：%s\r\n云电脑：%s\r\n当前积分：%d\r\nAI任务：%s，下次 %s\r\nAI最近异常：%s\r\n最近异常：%s",
+		connection, desktopName, state.Points, aiStatus, nextAI, aiError, lastError,
+	)
 	ptr := utf16Ptr(text)
 	setWindowTextW.Call(statusText, uintptr(unsafe.Pointer(ptr)))
+}
+
+func startAITask(_ uintptr) {
+	if uiRuntime == nil {
+		return
+	}
+	// Scheduler 会把运行状态和业务错误同步到 App Model；后台 goroutine 不直接
+	// 调用 MessageBox，避免跨 Win32 UI 线程操作窗口。
+	go func() { _ = uiRuntime.RunAITask() }()
 }
 
 func addTrayIcon(hwnd, icon uintptr) error {
@@ -335,8 +443,10 @@ func showTrayMenu(hwnd uintptr) {
 	}
 	defer destroyMenu.Call(menu)
 	openText := utf16Ptr("打开主界面")
+	runAIText := utf16Ptr("立即执行 AI 任务")
 	exitText := utf16Ptr("退出")
 	appendMenuW.Call(menu, mfString, menuOpen, uintptr(unsafe.Pointer(openText)))
+	appendMenuW.Call(menu, mfString, menuRunAI, uintptr(unsafe.Pointer(runAIText)))
 	appendMenuW.Call(menu, mfSeparator, 0, 0)
 	appendMenuW.Call(menu, mfString, menuExit, uintptr(unsafe.Pointer(exitText)))
 
@@ -372,4 +482,10 @@ func utf16Ptr(value string) *uint16 {
 		panic(err)
 	}
 	return ptr
+}
+
+func ShowError(title, message string) {
+	titlePtr := utf16Ptr(title)
+	messagePtr := utf16Ptr(message)
+	messageBoxW.Call(0, uintptr(unsafe.Pointer(messagePtr)), uintptr(unsafe.Pointer(titlePtr)), 0x00000010)
 }

@@ -1,10 +1,17 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/uvwt/CtyunHelper/internal/automation"
 	"github.com/uvwt/CtyunHelper/internal/ctyun/auth"
 )
 
@@ -55,7 +62,7 @@ func TestAuthFlowRestoresCachedProfileWithoutRelogin(t *testing.T) {
 	store := &memoryAccountStore{profile: profile, profileExists: true}
 	client := auth.NewClient(auth.DeviceIdentity{Code: "ctyun_fixed"}, auth.ClientOptions{})
 	model := NewModel(State{})
-	flow := NewAuthFlow(client, store, model)
+	flow := NewAuthFlow(client, store, model, nil)
 	restored, err := flow.Restore("account")
 	if err != nil || !restored {
 		t.Fatalf("Restore() restored=%v err=%v", restored, err)
@@ -75,7 +82,7 @@ func TestAuthFlowOnlyClearsProfileOnExplicitAuthFailure(t *testing.T) {
 	client := auth.NewClient(auth.DeviceIdentity{Code: "ctyun_fixed"}, auth.ClientOptions{})
 	client.UseProfile(profile)
 	model := NewModel(State{Account: "account"})
-	flow := NewAuthFlow(client, store, model)
+	flow := NewAuthFlow(client, store, model, nil)
 
 	if err := flow.HandleSessionError(errors.New("network down")); err != nil {
 		t.Fatal(err)
@@ -100,7 +107,7 @@ func TestAuthFlowKeepsUnboundProfileForBinding(t *testing.T) {
 	store := &memoryAccountStore{profile: profile, profileExists: true}
 	client := auth.NewClient(auth.DeviceIdentity{Code: "ctyun_fixed"}, auth.ClientOptions{})
 	model := NewModel(State{})
-	flow := NewAuthFlow(client, store, model)
+	flow := NewAuthFlow(client, store, model, nil)
 	if _, err := flow.Restore("account"); err != nil {
 		t.Fatal(err)
 	}
@@ -109,5 +116,42 @@ func TestAuthFlowKeepsUnboundProfileForBinding(t *testing.T) {
 	}
 	if _, ok := client.Profile(); !ok {
 		t.Fatal("unbound profile must remain available for binding")
+	}
+}
+
+func TestAuthFlowLimitsRealLoginRequestsToTwoPerDay(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/auth/client/login" {
+			http.NotFound(w, r)
+			return
+		}
+		calls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 50001, "msg": "login failed"})
+	}))
+	defer server.Close()
+
+	client := auth.NewClient(auth.DeviceIdentity{Code: "ctyun_fixed"}, auth.ClientOptions{
+		APIOrigin: server.URL, HTTPClient: server.Client(),
+	})
+	model := NewModel(State{})
+	guard := automation.NewGuard(automation.DefaultPolicy(), automation.SafetyState{}, automation.GuardOptions{
+		Now: func() time.Time { return time.Date(2026, 9, 4, 10, 0, 0, 0, time.Local) },
+	})
+	flow := NewAuthFlow(client, &memoryAccountStore{}, model, guard)
+	challenge := auth.LoginChallenge{ID: "challenge", Code: "salt", CaptchaKey: "captcha-key"}
+	for i := 0; i < 2; i++ {
+		if _, err := flow.CompleteLogin(context.Background(), "account", "password", "1234", challenge); err == nil {
+			t.Fatal("expected login failure")
+		}
+	}
+	if _, err := flow.CompleteLogin(context.Background(), "account", "password", "1234", challenge); err == nil {
+		t.Fatal("third login should be blocked by daily policy")
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("real login calls = %d, want 2", got)
+	}
+	if got := guard.Snapshot().DailyActions[automation.ActionLogin]; got != 2 {
+		t.Fatalf("login quota = %d, want 2", got)
 	}
 }

@@ -18,6 +18,13 @@ const (
 	ConnectionError      ConnectionState = "error"
 )
 
+type JobStatus struct {
+	Running   bool
+	LastRun   time.Time
+	NextRun   time.Time
+	LastError string
+}
+
 type State struct {
 	Account          string
 	DesktopID        string
@@ -25,6 +32,7 @@ type State struct {
 	Connection       ConnectionState
 	OnlineSince      time.Time
 	Points           int
+	AITask           JobStatus
 	AutomationPaused bool
 	LastError        string
 	ChangedAt        time.Time

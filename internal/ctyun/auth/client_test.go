@@ -69,6 +69,9 @@ func TestNativeLoginHTTPFlow(t *testing.T) {
 	if profile.UserID != 123 || profile.CommonLoginReqHeader != "common-data" {
 		t.Fatalf("profile = %#v", profile)
 	}
+	if _, ok := client.Profile(); ok {
+		t.Fatal("low-level Login must not install candidate profile before app persistence succeeds")
+	}
 }
 
 func TestGetTicketCarriesNativePublicSignature(t *testing.T) {

@@ -116,18 +116,18 @@ func (c *Client) SendDeviceSMS(ctx context.Context, captchaCode, captchaKey stri
 	return smsKey, nil
 }
 
-func (c *Client) BindDevice(ctx context.Context, smsCode, smsKey string) error {
+func (c *Client) BindDevice(ctx context.Context, smsCode, smsKey string) (Profile, error) {
 	profile, ok := c.Profile()
 	if !ok {
-		return fmt.Errorf("auth: 尚未登录")
+		return Profile{}, fmt.Errorf("auth: 尚未登录")
 	}
 	if strings.TrimSpace(smsCode) == "" || smsKey == "" {
-		return fmt.Errorf("auth: 短信验证码不能为空")
+		return Profile{}, fmt.Errorf("auth: 短信验证码不能为空")
 	}
 	const path = "/api/cdserv/client/device/binding"
 	headers, err := c.serverHeaders(ctx, path)
 	if err != nil {
-		return err
+		return Profile{}, err
 	}
 	headers.Set("Content-Type", "application/x-www-form-urlencoded")
 	hostName, err := os.Hostname()
@@ -151,30 +151,30 @@ func (c *Client) BindDevice(ctx context.Context, smsCode, smsKey string) error {
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiOrigin+path, bytes.NewBufferString(form.Encode()))
 	if err != nil {
-		return err
+		return Profile{}, err
 	}
 	request.Header = headers
 	response, err := c.http.Do(request)
 	if err != nil {
-		return fmt.Errorf("auth: 绑定设备: %w", err)
+		return Profile{}, fmt.Errorf("auth: 绑定设备: %w", err)
 	}
 	defer response.Body.Close()
 	if err := rejectEncryptedResponse(response, path); err != nil {
-		return err
+		return Profile{}, err
 	}
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("auth: 绑定设备 HTTP %d", response.StatusCode)
+		return Profile{}, fmt.Errorf("auth: 绑定设备 HTTP %d", response.StatusCode)
 	}
 	var envelope apiEnvelope[json.RawMessage]
 	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
-		return fmt.Errorf("auth: 解析设备绑定响应: %w", err)
+		return Profile{}, fmt.Errorf("auth: 解析设备绑定响应: %w", err)
 	}
 	if envelope.Code != 0 {
-		return APIError{Code: envelope.Code, Message: envelope.Message}
+		return Profile{}, APIError{Code: envelope.Code, Message: envelope.Message}
 	}
 	profile.BondedDevice = true
-	c.UseProfile(profile)
-	return nil
+	// 和账号登录一样，低层协议只返回候选状态；由 App 在缓存写入成功后提交。
+	return profile, nil
 }
 
 func (c *Client) serverHeaders(ctx context.Context, path string) (http.Header, error) {

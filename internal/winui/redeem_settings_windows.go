@@ -129,6 +129,8 @@ func openRedeemSettingsWindow(owner uintptr) {
 	}
 	showWindow.Call(hwnd, swShow)
 	updateWindow.Call(hwnd)
+	// 进入设置页就刷新目录，保留手动刷新按钮作为网络失败后的重试入口。
+	startRedeemCatalogLoad(state)
 }
 
 func createRedeemControls(state *redeemDialogState, instance uintptr) {
@@ -227,7 +229,11 @@ func redeemSettingsWindowProc(hwnd uintptr, message uint32, wParam, lParam uintp
 			return 0
 		}
 		populateRedeemCatalog(state, catalog)
-		setControlText(state.statusText, fmt.Sprintf("已加载 %d 台云电脑、%d 个可兑换商品。", len(catalog.Desktops), len(catalog.Products)))
+		if state.settings.Pending {
+			setControlText(state.statusText, fmt.Sprintf("已加载 %d 台云电脑、%d 个可兑换商品；仍有一笔兑换待人工确认。", len(catalog.Desktops), len(catalog.Products)))
+		} else {
+			setControlText(state.statusText, fmt.Sprintf("已加载 %d 台云电脑、%d 个可兑换商品。", len(catalog.Desktops), len(catalog.Products)))
+		}
 		return 0
 	case wmRedeemSaved:
 		state.mu.Lock()
@@ -274,7 +280,11 @@ func startRedeemCatalogLoad(state *redeemDialogState) {
 		return
 	}
 	setRedeemDialogBusy(state, true)
-	setControlText(state.statusText, "正在加载云电脑和商品目录…")
+	if state.settings.Pending {
+		setControlText(state.statusText, "正在加载云电脑和商品目录…；当前仍有一笔兑换待人工确认。")
+	} else {
+		setControlText(state.statusText, "正在加载云电脑和商品目录…")
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()

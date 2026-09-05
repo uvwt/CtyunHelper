@@ -15,6 +15,8 @@ type PointsSnapshot struct {
 	UsageTaskFound  bool
 	UsageTaskStatus int
 	UsageProgress   int
+	AITaskFound     bool
+	AITaskStatus    int
 }
 
 type pointsStatusClient interface {
@@ -106,12 +108,17 @@ func (j *PointsJob) readTask(ctx context.Context) (PointsSnapshot, error) {
 	if err != nil {
 		return PointsSnapshot{}, fmt.Errorf("automation: 查询积分任务: %w", err)
 	}
+	snapshot := PointsSnapshot{}
 	for _, task := range tasks {
-		if task.Name == UsageTaskName {
-			return PointsSnapshot{
-				UsageTaskFound: true, UsageTaskStatus: task.Status, UsageProgress: task.CurrentProgress,
-			}, nil
+		switch task.Name {
+		case UsageTaskName:
+			snapshot.UsageTaskFound = true
+			snapshot.UsageTaskStatus = task.Status
+			snapshot.UsageProgress = task.CurrentProgress
+		case AITaskName:
+			snapshot.AITaskFound = true
+			snapshot.AITaskStatus = task.Status
 		}
 	}
-	return PointsSnapshot{}, nil
+	return snapshot, nil
 }

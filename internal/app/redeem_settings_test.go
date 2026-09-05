@@ -99,6 +99,27 @@ func TestRedeemSettingsCatalogIsReadOnly(t *testing.T) {
 	}
 }
 
+func TestRedeemSettingsCatalogPublishesConfiguredTargetNames(t *testing.T) {
+	initial := storage.RedeemConfig{
+		Enabled: true, Account: "account", DesktopID: 42, ProductID: 99, ProductName: "月卡",
+		ProductType: "gift", CostPoints: 300, ScheduleType: automation.RedeemScheduleDaily, IntervalDays: 1,
+	}
+	fixture := newRedeemSettingsFixture(t, initial, automation.RedeemState{})
+	if got := fixture.model.Snapshot().RedeemDesktopName; got != "云电脑 42" {
+		t.Fatalf("legacy desktop fallback = %q", got)
+	}
+	if _, err := fixture.service.Catalog(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	state := fixture.model.Snapshot()
+	if state.RedeemDesktopName != "主云电脑" || state.RedeemProductName != "月卡" || state.RedeemCostPoints != 300 {
+		t.Fatalf("catalog target state = %#v", state)
+	}
+	if fixture.placeCalls.Load() != 0 {
+		t.Fatalf("catalog unexpectedly called placeOrder %d times", fixture.placeCalls.Load())
+	}
+}
+
 func TestRedeemSettingsSaveUsesFreshServerProductAndUpdatesRuntime(t *testing.T) {
 	fixture := newRedeemSettingsFixture(t, storage.RedeemConfig{}, automation.RedeemState{})
 	err := fixture.service.Save(context.Background(), SaveRedeemSettingsRequest{
@@ -112,11 +133,12 @@ func TestRedeemSettingsSaveUsesFreshServerProductAndUpdatesRuntime(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !config.Redeem.Enabled || config.Redeem.Account != "account" || config.Redeem.ProductName != "月卡" || config.Redeem.CostPoints != 300 || config.Redeem.MaxRedeemTimes != 2 {
+	if !config.Redeem.Enabled || config.Redeem.Account != "account" || config.Redeem.DesktopName != "主云电脑" || config.Redeem.ProductName != "月卡" || config.Redeem.CostPoints != 300 || config.Redeem.MaxRedeemTimes != 2 {
 		t.Fatalf("saved redeem = %#v", config.Redeem)
 	}
-	if !fixture.job.Enabled() || fixture.job.Account() != "account" || !fixture.model.Snapshot().RedeemEnabled {
-		t.Fatalf("runtime plan/model not updated: state=%#v", fixture.model.Snapshot())
+	state := fixture.model.Snapshot()
+	if !fixture.job.Enabled() || fixture.job.Account() != "account" || !state.RedeemEnabled || state.RedeemDesktopName != "主云电脑" || state.RedeemProductName != "月卡" || state.RedeemCostPoints != 300 {
+		t.Fatalf("runtime plan/model not updated: state=%#v", state)
 	}
 	if fixture.placeCalls.Load() != 0 {
 		t.Fatalf("saving settings unexpectedly called placeOrder %d times", fixture.placeCalls.Load())

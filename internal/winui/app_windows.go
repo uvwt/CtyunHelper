@@ -23,6 +23,7 @@ const (
 	wmClose              = 0x0010
 	wmSetFont            = 0x0030
 	wmCommand            = 0x0111
+	wmCtlColorStatic     = 0x0138
 	wmLButtonDblClk      = 0x0203
 	wmRButtonUp          = 0x0205
 	wmApp                = 0x8000
@@ -169,12 +170,38 @@ var (
 	createMutexW         = kernel32UI.NewProc("CreateMutexW")
 	closeHandle          = kernel32UI.NewProc("CloseHandle")
 	getStockObject       = gdi32UI.NewProc("GetStockObject")
+	setTextColor         = gdi32UI.NewProc("SetTextColor")
+	setBkMode            = gdi32UI.NewProc("SetBkMode")
+	getSysColorBrush     = user32.NewProc("GetSysColorBrush")
 	shellNotifyIconW     = shell32.NewProc("Shell_NotifyIconW")
+)
+
+type homeStatusControls struct {
+	connection    uintptr
+	desktop       uintptr
+	points        uintptr
+	usage         uintptr
+	redeemDesktop uintptr
+	pointsJob     uintptr
+	aiJob         uintptr
+	redeem        uintptr
+	redeemProduct uintptr
+	lastError     uintptr
+}
+
+const (
+	statusColorDefault uint32 = 0x00202020
+	statusColorSuccess uint32 = 0x00006400
+	statusColorWarning uint32 = 0x000080E0
+	statusColorError   uint32 = 0x000000C0
+	statusColorMuted   uint32 = 0x00707070
+	statusColorInfo    uint32 = 0x00A06000
 )
 
 var (
 	tray                 notifyIconData
-	statusText           uintptr
+	homeStatus           homeStatusControls
+	homeStatusColors     = make(map[uintptr]uint32)
 	loginButton          uintptr
 	bindButton           uintptr
 	aiButton             uintptr
@@ -333,6 +360,13 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 			showMessage(hwnd, "退出账号", "已退出账号并清除本地登录凭据。", mbInformation)
 		}
 		return 0
+	case wmCtlColorStatic:
+		if color, ok := homeStatusColors[lParam]; ok {
+			setTextColor.Call(wParam, uintptr(color))
+			setBkMode.Call(wParam, 1) // TRANSPARENT
+			brush, _, _ := getSysColorBrush.Call(colorWindow)
+			return brush
+		}
 	case wmTray:
 		switch uint32(lParam) {
 		case wmLButtonDblClk:
@@ -385,7 +419,28 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 
 func createStatusText(hwnd, instance uintptr) {
 	createControl("BUTTON", "运行状态", wsChild|wsVisible|bsGroupBox, 24, 20, 840, 250, hwnd, 0, instance)
-	statusText = createControl("STATIC", "", wsChild|wsVisible|ssLeft, 46, 48, 796, 204, hwnd, 0, instance)
+
+	createLabel(hwnd, instance, "连接状态", 46, 48, 96, 24)
+	homeStatus.connection = createLabel(hwnd, instance, "", 146, 48, 250, 24)
+	createLabel(hwnd, instance, "当前云电脑", 46, 84, 96, 24)
+	homeStatus.desktop = createLabel(hwnd, instance, "", 146, 84, 250, 24)
+	createLabel(hwnd, instance, "当前积分", 46, 120, 96, 24)
+	homeStatus.points = createLabel(hwnd, instance, "", 146, 120, 250, 24)
+	createLabel(hwnd, instance, "使用1小时", 46, 156, 96, 24)
+	homeStatus.usage = createLabel(hwnd, instance, "", 146, 156, 250, 24)
+	createLabel(hwnd, instance, "配置云电脑", 46, 192, 96, 24)
+	homeStatus.redeemDesktop = createLabel(hwnd, instance, "", 146, 192, 250, 24)
+
+	createLabel(hwnd, instance, "积分刷新", 430, 48, 96, 24)
+	homeStatus.pointsJob = createLabel(hwnd, instance, "", 530, 48, 304, 24)
+	createLabel(hwnd, instance, "AI任务", 430, 84, 96, 24)
+	homeStatus.aiJob = createLabel(hwnd, instance, "", 530, 84, 304, 24)
+	createLabel(hwnd, instance, "自动兑换", 430, 120, 96, 24)
+	homeStatus.redeem = createLabel(hwnd, instance, "", 530, 120, 304, 24)
+	createLabel(hwnd, instance, "兑换商品", 430, 156, 96, 24)
+	homeStatus.redeemProduct = createLabel(hwnd, instance, "", 530, 156, 304, 24)
+	createLabel(hwnd, instance, "最近异常", 430, 192, 96, 24)
+	homeStatus.lastError = createLabel(hwnd, instance, "", 530, 192, 304, 42)
 }
 
 func createActionButtons(hwnd, instance uintptr) {
@@ -423,7 +478,7 @@ func createAppIconControl(parent, instance, icon, x, y, width, height uintptr) u
 }
 
 func updateStatusText(state app.State) {
-	if statusText == 0 {
+	if homeStatus.connection == 0 {
 		return
 	}
 	jobsRunning := state.AITask.Running || state.PointsTask.Running || state.RedeemTask.Running
@@ -479,73 +534,162 @@ func updateStatusText(state app.State) {
 		}
 		enableWindow.Call(logoutButton, enabled)
 	}
-	connection := map[app.ConnectionState]string{
-		app.ConnectionStopped:    "等待启动",
-		app.ConnectionConnecting: "正在连接",
-		app.ConnectionOnline:     "在线",
-		app.ConnectionBackoff:    "等待重连",
-		app.ConnectionPaused:     "已暂停",
-		app.ConnectionAuth:       "需要登录",
-		app.ConnectionDeviceBind: "需要绑定设备",
-		app.ConnectionError:      "异常",
-	}[state.Connection]
-	if connection == "" {
-		connection = string(state.Connection)
-	}
+
+	connection, connectionColor := connectionStatusText(state.Connection)
+	setHomeStatusState(homeStatus.connection, connection, connectionColor)
+
 	desktopName := state.DesktopName
+	desktopColor := statusColorInfo
 	if desktopName == "" {
 		desktopName = "未选择"
+		desktopColor = statusColorMuted
 	}
+	setHomeStatusValue(homeStatus.desktop, desktopName, desktopColor)
+	setHomeStatusValue(homeStatus.points, fmt.Sprintf("%d", state.Points), statusColorInfo)
+
+	usage, usageColor := usageStatusText(state.UsageTask)
+	setHomeStatusState(homeStatus.usage, usage, usageColor)
+
+	configuredDesktop := state.RedeemDesktopName
+	configuredDesktopColor := statusColorInfo
+	if configuredDesktop == "" {
+		configuredDesktop = "未配置"
+		configuredDesktopColor = statusColorMuted
+	}
+	setHomeStatusValue(homeStatus.redeemDesktop, configuredDesktop, configuredDesktopColor)
+
+	pointsStatus, pointsColor := jobStatusText(state.PointsTask, "刷新中", false)
+	setHomeStatusState(homeStatus.pointsJob, pointsStatus, pointsColor)
+
+	aiStatus, aiColor := aiHomeStatusText(state)
+	setHomeStatusState(homeStatus.aiJob, aiStatus, aiColor)
+
+	redeemStatus, redeemColor := redeemHomeStatusText(state)
+	setHomeStatusState(homeStatus.redeem, redeemStatus, redeemColor)
+
+	configuredProduct := state.RedeemProductName
+	configuredProductColor := statusColorInfo
+	if configuredProduct == "" {
+		configuredProduct = "未配置"
+		configuredProductColor = statusColorMuted
+	} else if state.RedeemCostPoints > 0 {
+		configuredProduct = fmt.Sprintf("%s（%d 积分）", configuredProduct, state.RedeemCostPoints)
+	}
+	setHomeStatusValue(homeStatus.redeemProduct, configuredProduct, configuredProductColor)
+
 	lastError := state.LastError
+	lastErrorColor := statusColorError
 	if lastError == "" {
 		lastError = "无"
+		lastErrorColor = statusColorSuccess
 	}
-	usage := "任务列表未返回"
-	if state.UsageTask.Found {
-		if state.UsageTask.Status == 2 {
-			usage = "已完成"
-		} else {
-			usage = fmt.Sprintf("进行中（status=%d, progress=%d）", state.UsageTask.Status, state.UsageTask.Progress)
-		}
+	setHomeStatusState(homeStatus.lastError, lastError, lastErrorColor)
+}
+
+func setHomeStatusState(control uintptr, text string, color uint32) {
+	setHomeStatusValue(control, homeStatusIndicatorText(text), color)
+}
+
+func homeStatusIndicatorText(text string) string {
+	return "● " + text
+}
+
+func setHomeStatusValue(control uintptr, text string, color uint32) {
+	if control == 0 {
+		return
 	}
-	pointsStatus := "等待"
-	if state.PointsTask.Running {
-		pointsStatus = "刷新中"
-	} else if state.PointsTask.LastError != "" {
-		pointsStatus = "异常：" + state.PointsTask.LastError
+	homeStatusColors[control] = color
+	setControlText(control, text)
+}
+
+func connectionStatusText(state app.ConnectionState) (string, uint32) {
+	switch state {
+	case app.ConnectionOnline:
+		return "在线", statusColorSuccess
+	case app.ConnectionConnecting:
+		return "正在连接", statusColorWarning
+	case app.ConnectionBackoff:
+		return "等待重连", statusColorWarning
+	case app.ConnectionPaused:
+		return "已暂停", statusColorWarning
+	case app.ConnectionAuth:
+		return "需要登录", statusColorError
+	case app.ConnectionDeviceBind:
+		return "需要绑定设备", statusColorWarning
+	case app.ConnectionError:
+		return "异常", statusColorError
+	case app.ConnectionStopped:
+		return "等待启动", statusColorMuted
+	default:
+		return string(state), statusColorDefault
 	}
-	aiStatus := "等待"
-	if state.AutomationPaused {
-		aiStatus = "已暂停"
-	} else if state.AITask.Running {
-		aiStatus = "运行中"
-	} else if state.AITask.LastError != "" {
-		aiStatus = "异常：" + state.AITask.LastError
+}
+
+func usageStatusText(status app.UsageTaskStatus) (string, uint32) {
+	if !status.Found {
+		return "等待刷新", statusColorMuted
 	}
-	redeemStatus := "未启用"
-	if state.RedeemEnabled {
-		redeemStatus = "等待"
-		if state.AutomationPaused {
-			redeemStatus = "已暂停"
-		} else if state.RedeemTask.Running {
-			redeemStatus = "运行中"
-		} else if state.RedeemTask.LastError != "" {
-			redeemStatus = "异常：" + state.RedeemTask.LastError
-		}
+	if status.Status == 2 {
+		return "已完成", statusColorSuccess
 	}
-	if state.RedeemSummary != "" {
-		redeemStatus += "；" + state.RedeemSummary
+	return fmt.Sprintf("进行中（status=%d, progress=%d）", status.Status, status.Progress), statusColorWarning
+}
+
+func jobStatusText(status app.JobStatus, runningText string, paused bool) (string, uint32) {
+	if paused {
+		return "已暂停", statusColorWarning
 	}
-	nextAI := "未安排"
+	if status.Running {
+		return runningText, statusColorWarning
+	}
+	if status.LastError != "" {
+		return "异常：" + status.LastError, statusColorError
+	}
+	if !status.LastRun.IsZero() {
+		return "已完成（" + status.LastRun.Format("01-02 15:04") + "）", statusColorSuccess
+	}
+	return "等待首次执行", statusColorMuted
+}
+
+func aiHomeStatusText(state app.State) (string, uint32) {
+	text, color := jobStatusText(state.AITask, "运行中", state.AutomationPaused)
+	if state.AITaskCompleted && !state.AutomationPaused && !state.AITask.Running && state.AITask.LastError == "" {
+		text = "已完成"
+		color = statusColorSuccess
+	}
 	if !state.AITask.NextRun.IsZero() {
-		nextAI = state.AITask.NextRun.Format("01-02 15:04")
+		text += "；下次 " + state.AITask.NextRun.Format("01-02 15:04")
 	}
-	text := fmt.Sprintf(
-		"连接状态：%s\r\n云电脑：%s\r\n当前积分：%d\r\n使用1小时：%s\r\n积分刷新：%s\r\nAI任务：%s，下次 %s\r\n自动兑换：%s\r\n最近异常：%s",
-		connection, desktopName, state.Points, usage, pointsStatus, aiStatus, nextAI, redeemStatus, lastError,
-	)
-	ptr := utf16Ptr(text)
-	setWindowTextW.Call(statusText, uintptr(unsafe.Pointer(ptr)))
+	return text, color
+}
+
+func redeemHomeStatusText(state app.State) (string, uint32) {
+	if state.RedeemTask.Running {
+		return "运行中", statusColorWarning
+	}
+	if state.RedeemTask.LastError != "" {
+		return "异常：" + state.RedeemTask.LastError, statusColorError
+	}
+	if !state.RedeemEnabled {
+		if state.RedeemSummary != "" {
+			if state.RedeemSummary == "未启用" {
+				return "未启用", statusColorMuted
+			}
+			return state.RedeemSummary, statusColorWarning
+		}
+		return "未启用", statusColorMuted
+	}
+	if state.AutomationPaused {
+		return "已暂停", statusColorWarning
+	}
+	if !state.RedeemTask.LastRun.IsZero() {
+		text := "已完成（" + state.RedeemTask.LastRun.Format("01-02 15:04") + "）"
+		if state.RedeemSummary != "" && state.RedeemSummary != "等待兑换计划" {
+			text += "；" + state.RedeemSummary
+		}
+		return text, statusColorSuccess
+	}
+	return "等待执行", statusColorInfo
 }
 
 func startAITask(_ uintptr) {

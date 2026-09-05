@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/uvwt/CtyunHelper/internal/automation"
@@ -157,11 +158,23 @@ func (a *TaskAutomation) UpdateAccount(account string) {
 	if a == nil || a.model == nil || a.redeemJob == nil {
 		return
 	}
+	plan := a.redeemJob.PlanSnapshot()
 	redeemState := a.redeemJob.Snapshot()
 	validationErr := a.redeemJob.Validate()
 	accountMatches := a.redeemJob.Account() != "" && a.redeemJob.Account() == account
 	pending := redeemState.LastAttemptStatus == automation.RedeemAttemptPending
+	desktopName := strings.TrimSpace(plan.DesktopName)
+	if desktopName == "" && plan.DesktopID > 0 {
+		desktopName = fmt.Sprintf("云电脑 %d", plan.DesktopID)
+	}
+	productName := strings.TrimSpace(plan.ProductName)
+	if productName == "" && plan.ProductID > 0 {
+		productName = fmt.Sprintf("商品 %d", plan.ProductID)
+	}
 	a.model.Update(func(state *State) {
+		state.RedeemDesktopName = desktopName
+		state.RedeemProductName = productName
+		state.RedeemCostPoints = plan.CostPoints
 		state.RedeemEnabled = a.redeemJob.Enabled() && validationErr == nil && accountMatches && !pending
 		switch {
 		case !a.redeemJob.Enabled():
@@ -186,6 +199,7 @@ func (a *TaskAutomation) applyPointsSnapshot(snapshot automation.PointsSnapshot)
 		state.UsageTask = UsageTaskStatus{
 			Found: snapshot.UsageTaskFound, Status: snapshot.UsageTaskStatus, Progress: snapshot.UsageProgress,
 		}
+		state.AITaskCompleted = snapshot.AITaskFound && snapshot.AITaskStatus == automation.TaskDone
 	})
 }
 

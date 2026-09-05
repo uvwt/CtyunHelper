@@ -30,7 +30,10 @@ func (f *fakePointsStatus) GeneralPoints(context.Context) (int, error) { return 
 
 func TestPointsRefreshReportsUsageAndTotalPoints(t *testing.T) {
 	client := &fakePointsStatus{
-		tasks: [][]points.Task{{{Name: UsageTaskName, Status: 0, CurrentProgress: 35}}},
+		tasks: [][]points.Task{{
+			{Name: UsageTaskName, Status: 0, CurrentProgress: 35},
+			{Name: AITaskName, Status: TaskDone},
+		}},
 		value: 650,
 	}
 	job := NewPointsJob(client, PointsJobOptions{})
@@ -38,7 +41,7 @@ func TestPointsRefreshReportsUsageAndTotalPoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Points != 650 || !snapshot.UsageTaskFound || snapshot.UsageTaskStatus != 0 || snapshot.UsageProgress != 35 {
+	if snapshot.Points != 650 || !snapshot.UsageTaskFound || snapshot.UsageTaskStatus != 0 || snapshot.UsageProgress != 35 || !snapshot.AITaskFound || snapshot.AITaskStatus != TaskDone {
 		t.Fatalf("snapshot = %#v", snapshot)
 	}
 }

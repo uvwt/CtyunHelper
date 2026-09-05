@@ -101,7 +101,14 @@ func (s *RedeemSettingsService) Catalog(ctx context.Context) (RedeemCatalog, err
 	if state.Account == "" || state.Connection == ConnectionAuth || state.Connection == ConnectionDeviceBind {
 		return RedeemCatalog{}, fmt.Errorf("app: 请先完成登录和设备绑定")
 	}
-	return s.loadCatalog(ctx)
+	catalog, err := s.loadCatalog(ctx)
+	if err != nil {
+		return RedeemCatalog{}, err
+	}
+	// 目录刷新同时补齐首页展示用的最新名称，但不改兑换计划、不写配置，
+	// 因此依然是只读操作；旧配置没有 desktopName 时也能立即显示真实名称。
+	s.publishConfiguredTarget(catalog)
+	return catalog, nil
 }
 
 func (s *RedeemSettingsService) Save(ctx context.Context, request SaveRedeemSettingsRequest) error {
@@ -154,6 +161,7 @@ func (s *RedeemSettingsService) Save(ctx context.Context, request SaveRedeemSett
 		Enabled:        true,
 		Account:        state.Account,
 		DesktopID:      desktop.ID,
+		DesktopName:    desktop.Name,
 		ProductID:      product.ID,
 		ProductName:    product.Name,
 		ProductType:    product.Type,
@@ -177,6 +185,7 @@ func (s *RedeemSettingsService) Save(ctx context.Context, request SaveRedeemSett
 		Enabled:        true,
 		Account:        plan.Account,
 		DesktopID:      plan.DesktopID,
+		DesktopName:    plan.DesktopName,
 		ProductID:      plan.ProductID,
 		ProductName:    plan.ProductName,
 		ProductType:    plan.ProductType,
@@ -216,6 +225,27 @@ func (s *RedeemSettingsService) ResolvePending(succeeded bool) error {
 	}
 	s.tasks.UpdateAccount(state.Account)
 	return nil
+}
+
+func (s *RedeemSettingsService) publishConfiguredTarget(catalog RedeemCatalog) {
+	if s == nil || s.tasks == nil || s.tasks.redeemJob == nil || s.model == nil {
+		return
+	}
+	plan := s.tasks.redeemJob.PlanSnapshot()
+	desktop, desktopFound := findRedeemDesktop(catalog.Desktops, plan.DesktopID)
+	product, productFound := findRedeemProduct(catalog.Products, plan.ProductID, plan.ProductType)
+	if !desktopFound && !productFound {
+		return
+	}
+	s.model.Update(func(state *State) {
+		if desktopFound {
+			state.RedeemDesktopName = desktop.Name
+		}
+		if productFound {
+			state.RedeemProductName = product.Name
+			state.RedeemCostPoints = product.CostPoints
+		}
+	})
 }
 
 func (s *RedeemSettingsService) loadCatalog(ctx context.Context) (RedeemCatalog, error) {
@@ -277,7 +307,7 @@ func redeemSettingsFromConfig(config storage.RedeemConfig) RedeemSettingsView {
 
 func redeemPlanFromConfig(config storage.RedeemConfig) automation.RedeemPlan {
 	return automation.RedeemPlan{
-		Enabled: config.Enabled, Account: config.Account, DesktopID: config.DesktopID,
+		Enabled: config.Enabled, Account: config.Account, DesktopID: config.DesktopID, DesktopName: config.DesktopName,
 		ProductID: config.ProductID, ProductName: config.ProductName, ProductType: config.ProductType,
 		CostPoints: config.CostPoints, MaxRedeemTimes: config.MaxRedeemTimes,
 		ScheduleType: config.ScheduleType, IntervalDays: config.IntervalDays,

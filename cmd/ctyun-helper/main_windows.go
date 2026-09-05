@@ -91,7 +91,7 @@ func buildRuntime() (*app.Runtime, error) {
 	aiJob := automation.NewAIJob(pointsClient, eaiClient, guard, "你好")
 	pointsJob := automation.NewPointsJob(pointsClient, automation.PointsJobOptions{})
 	redeemPlan := automation.RedeemPlan{
-		Enabled: config.Redeem.Enabled, Account: config.Redeem.Account, DesktopID: config.Redeem.DesktopID,
+		Enabled: config.Redeem.Enabled, Account: config.Redeem.Account, DesktopID: config.Redeem.DesktopID, DesktopName: config.Redeem.DesktopName,
 		ProductID: config.Redeem.ProductID, ProductName: config.Redeem.ProductName,
 		ProductType: config.Redeem.ProductType, CostPoints: config.Redeem.CostPoints,
 		MaxRedeemTimes: config.Redeem.MaxRedeemTimes, ScheduleType: config.Redeem.ScheduleType,

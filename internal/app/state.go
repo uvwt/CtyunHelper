@@ -32,21 +32,25 @@ type UsageTaskStatus struct {
 }
 
 type State struct {
-	Account          string
-	DesktopID        string
-	DesktopName      string
-	Connection       ConnectionState
-	OnlineSince      time.Time
-	Points           int
-	UsageTask        UsageTaskStatus
-	AITask           JobStatus
-	PointsTask       JobStatus
-	RedeemTask       JobStatus
-	RedeemEnabled    bool
-	RedeemSummary    string
-	AutomationPaused bool
-	LastError        string
-	ChangedAt        time.Time
+	Account           string
+	DesktopID         string
+	DesktopName       string
+	Connection        ConnectionState
+	OnlineSince       time.Time
+	Points            int
+	UsageTask         UsageTaskStatus
+	AITaskCompleted   bool
+	AITask            JobStatus
+	PointsTask        JobStatus
+	RedeemTask        JobStatus
+	RedeemEnabled     bool
+	RedeemDesktopName string
+	RedeemProductName string
+	RedeemCostPoints  int
+	RedeemSummary     string
+	AutomationPaused  bool
+	LastError         string
+	ChangedAt         time.Time
 }
 
 // Model 是进程内唯一的 UI 可观察状态。协议层只通过 App 更新 Model，

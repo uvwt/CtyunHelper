@@ -26,6 +26,7 @@ type RedeemPlan struct {
 	Enabled        bool
 	Account        string
 	DesktopID      int64
+	DesktopName    string
 	ProductID      int64
 	ProductName    string
 	ProductType    string
@@ -100,6 +101,17 @@ func (j *RedeemJob) Account() string {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return strings.TrimSpace(j.plan.Account)
+}
+
+// PlanSnapshot 返回当前兑换计划的只读副本，供 App Model 展示用户已经明确
+// 保存的兑换目标。MonthlyDays 会复制，调用方不能反向修改 Job 内部计划。
+func (j *RedeemJob) PlanSnapshot() RedeemPlan {
+	if j == nil {
+		return RedeemPlan{}
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return cloneRedeemPlan(j.plan)
 }
 
 func (j *RedeemJob) Validate() error {

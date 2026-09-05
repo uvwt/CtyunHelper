@@ -38,6 +38,7 @@ type RedeemConfig struct {
 	Enabled        bool   `json:"enabled"`
 	Account        string `json:"account"`
 	DesktopID      int64  `json:"desktopId"`
+	DesktopName    string `json:"desktopName,omitempty"`
 	ProductID      int64  `json:"productId"`
 	ProductName    string `json:"productName"`
 	ProductType    string `json:"productType"`

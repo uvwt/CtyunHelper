@@ -50,11 +50,11 @@ func TestPointsClientUsesNativePublicHeadersAndMergesDesktops(t *testing.T) {
 	}
 }
 
-func TestGeneralPointsUsesTotalPoints(t *testing.T) {
+func TestGeneralPointsUsesPointsFieldFromRealResponseShape(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": []map[string]any{
-			{"pointType": 1, "totalPoints": 650},
-			{"pointType": 2, "totalPoints": 999},
+			{"pointType": 1, "points": 650, "pretakePoints": 0},
+			{"pointType": 2, "points": 999, "pretakePoints": 0},
 		}})
 	}))
 	defer server.Close()

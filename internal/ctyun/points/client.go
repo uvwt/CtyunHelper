@@ -40,8 +40,8 @@ type Task struct {
 }
 
 type Balance struct {
-	PointType   int `json:"pointType"`
-	TotalPoints int `json:"totalPoints"`
+	PointType int `json:"pointType"`
+	Points    int `json:"points"`
 }
 
 type Desktop struct {
@@ -145,7 +145,7 @@ func (c *Client) GeneralPoints(ctx context.Context) (int, error) {
 	total := 0
 	for _, balance := range balances {
 		if balance.PointType == 1 {
-			total += balance.TotalPoints
+			total += balance.Points
 		}
 	}
 	return total, nil

@@ -107,6 +107,14 @@ internal/winui         Windows 原生窗口、托盘与系统集成
 
 ## 开发验证
 
+应用版本统一由 `internal/buildinfo.Version` 提供，开发构建默认显示 `0.1.0-dev`。正式发布时通过链接参数注入版本号，例如：
+
+```powershell
+go build -ldflags="-H=windowsgui -X github.com/uvwt/CtyunHelper/internal/buildinfo.Version=0.1.0" -o bin/CtyunHelper.exe ./cmd/ctyun-helper
+```
+
+主界面和托盘菜单的“关于”页面会显示该版本号、作者与项目仓库 `https://github.com/uvwt/CtyunHelper`。
+
 ```bash
 go test ./...
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \

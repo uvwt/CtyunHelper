@@ -6,7 +6,7 @@ package winui
 // WM_DESTROY 会负责清理自身状态和事件订阅；这里取句柄时不持锁调用
 // DestroyWindow，避免窗口过程再次取得同一把 mutex 造成死锁。
 func closeAuxiliaryWindows() {
-	handles := make([]uintptr, 0, 5)
+	handles := make([]uintptr, 0, 6)
 
 	dialogMu.Lock()
 	if loginDialog != nil && loginDialog.hwnd != 0 {
@@ -34,6 +34,12 @@ func closeAuxiliaryWindows() {
 		handles = append(handles, logsDialog.hwnd)
 	}
 	logsDialogMu.Unlock()
+
+	aboutDialogMu.Lock()
+	if aboutDialog != nil && aboutDialog.hwnd != 0 {
+		handles = append(handles, aboutDialog.hwnd)
+	}
+	aboutDialogMu.Unlock()
 
 	for _, hwnd := range handles {
 		destroyWindow.Call(hwnd)

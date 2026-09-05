@@ -66,6 +66,7 @@ const (
 	menuLogs             = 1007
 	menuLogout           = 1008
 	menuExit             = 1009
+	menuAbout            = 1010
 	buttonLogin          = 1101
 	buttonBind           = 1102
 	buttonAI             = 1103
@@ -75,6 +76,7 @@ const (
 	buttonSettings       = 1107
 	buttonLogs           = 1108
 	buttonLogout         = 1109
+	buttonAbout          = 1110
 	errorAlreadyExists   = 183
 )
 
@@ -212,6 +214,7 @@ var (
 	settingsButton       uintptr
 	logsButton           uintptr
 	logoutButton         uintptr
+	aboutButton          uintptr
 	uiModel              *app.Model
 	uiRuntime            *app.Runtime
 	logoutMu             sync.Mutex
@@ -400,6 +403,8 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 			openSettingsWindow(hwnd)
 		case buttonLogs, menuLogs:
 			openLogsWindow(hwnd)
+		case buttonAbout, menuAbout:
+			openAboutWindow(hwnd)
 		case buttonLogout, menuLogout:
 			startLogout(hwnd)
 		case menuExit:
@@ -462,6 +467,7 @@ func createActionButtons(hwnd, instance uintptr) {
 	settingsButton = createControl("BUTTON", "设置", wsChild|wsVisible|wsTabStop|bsPushButton, 46, 380, 122, 36, hwnd, buttonSettings, instance)
 	logsButton = createControl("BUTTON", "日志", wsChild|wsVisible|wsTabStop|bsPushButton, 180, 380, 122, 36, hwnd, buttonLogs, instance)
 	logoutButton = createControl("BUTTON", "退出账号", wsChild|wsVisible|wsTabStop|bsPushButton, 314, 380, 136, 36, hwnd, buttonLogout, instance)
+	aboutButton = createControl("BUTTON", "关于", wsChild|wsVisible|wsTabStop|bsPushButton, 586, 380, 122, 36, hwnd, buttonAbout, instance)
 	redeemSettingsButton = createControl("BUTTON", "兑换设置", wsChild|wsVisible|wsTabStop|bsPushButton, 720, 380, 122, 36, hwnd, buttonRedeemSettings, instance)
 }
 
@@ -817,6 +823,7 @@ func showTrayMenu(hwnd uintptr) {
 	redeemSettingsText := utf16Ptr("兑换设置")
 	settingsText := utf16Ptr("设置")
 	logsText := utf16Ptr("日志")
+	aboutText := utf16Ptr("关于")
 	logoutText := utf16Ptr("退出账号")
 	exitText := utf16Ptr("退出")
 	appendMenuW.Call(menu, mfString, menuOpen, uintptr(unsafe.Pointer(openText)))
@@ -828,6 +835,7 @@ func showTrayMenu(hwnd uintptr) {
 	appendMenuW.Call(menu, mfString, menuRedeemSettings, uintptr(unsafe.Pointer(redeemSettingsText)))
 	appendMenuW.Call(menu, mfString, menuSettings, uintptr(unsafe.Pointer(settingsText)))
 	appendMenuW.Call(menu, mfString, menuLogs, uintptr(unsafe.Pointer(logsText)))
+	appendMenuW.Call(menu, mfString, menuAbout, uintptr(unsafe.Pointer(aboutText)))
 	if uiModel != nil && uiModel.Snapshot().Account != "" {
 		appendMenuW.Call(menu, mfString, menuLogout, uintptr(unsafe.Pointer(logoutText)))
 	}

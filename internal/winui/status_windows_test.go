@@ -33,28 +33,26 @@ func TestJobStatusTextKeepsErrorAheadOfLastRun(t *testing.T) {
 	}
 }
 
-func TestUsageStatusTextShowsCompleted(t *testing.T) {
-	text, color := usageStatusText(app.UsageTaskStatus{Found: true, Status: 2, Progress: 60})
+func TestPointsTaskStatusTextShowsCompleted(t *testing.T) {
+	text, color := pointsTaskStatusText(app.PointsTaskStatus{Found: true, Status: 2, Progress: 3600})
 	if text != "已完成" || color != statusColorSuccess {
 		t.Fatalf("status = %q color=%#x", text, color)
+	}
+}
+
+func TestPointsTaskStatusTextShowsProgressAndPending(t *testing.T) {
+	text, color := pointsTaskStatusText(app.PointsTaskStatus{Found: true, Status: 0, Progress: 35})
+	if text != "进行中（进度 35）" || color != statusColorWarning {
+		t.Fatalf("progress status = %q color=%#x", text, color)
+	}
+	text, color = pointsTaskStatusText(app.PointsTaskStatus{Found: true, Status: 0})
+	if text != "待完成" || color != statusColorWarning {
+		t.Fatalf("pending status = %q color=%#x", text, color)
 	}
 }
 
 func TestHomeStatusIndicatorTextUsesSolidDot(t *testing.T) {
 	if got := homeStatusIndicatorText("已完成"); got != "● 已完成" {
 		t.Fatalf("indicator = %q", got)
-	}
-}
-
-func TestAIHomeStatusUsesServerTaskCompletionAfterRestart(t *testing.T) {
-	state := app.State{
-		AITaskCompleted: true,
-		AITask: app.JobStatus{
-			NextRun: time.Date(2026, 9, 5, 20, 0, 0, 0, time.Local),
-		},
-	}
-	text, color := aiHomeStatusText(state)
-	if text != "已完成；下次 09-05 20:00" || color != statusColorSuccess {
-		t.Fatalf("status = %q color=%#x", text, color)
 	}
 }

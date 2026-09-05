@@ -196,10 +196,15 @@ func (a *TaskAutomation) UpdateAccount(account string) {
 func (a *TaskAutomation) applyPointsSnapshot(snapshot automation.PointsSnapshot) {
 	a.model.Update(func(state *State) {
 		state.Points = snapshot.Points
-		state.UsageTask = UsageTaskStatus{
+		state.LoginAITask = PointsTaskStatus{
+			Found: snapshot.LoginAITaskFound, Status: snapshot.LoginAITaskStatus, Progress: snapshot.LoginAIProgress,
+		}
+		state.UsageTask = PointsTaskStatus{
 			Found: snapshot.UsageTaskFound, Status: snapshot.UsageTaskStatus, Progress: snapshot.UsageProgress,
 		}
-		state.AITaskCompleted = snapshot.AITaskFound && snapshot.AITaskStatus == automation.TaskDone
+		state.AIPointsTask = PointsTaskStatus{
+			Found: snapshot.AITaskFound, Status: snapshot.AITaskStatus, Progress: snapshot.AITaskProgress,
+		}
 	})
 }
 

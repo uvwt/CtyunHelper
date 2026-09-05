@@ -25,11 +25,14 @@ type JobStatus struct {
 	LastError string
 }
 
-type UsageTaskStatus struct {
+type PointsTaskStatus struct {
 	Found    bool
 	Status   int
 	Progress int
 }
+
+// UsageTaskStatus 保留旧类型名，避免现有 App/测试调用方产生无意义改动。
+type UsageTaskStatus = PointsTaskStatus
 
 type State struct {
 	Account           string
@@ -38,8 +41,9 @@ type State struct {
 	Connection        ConnectionState
 	OnlineSince       time.Time
 	Points            int
-	UsageTask         UsageTaskStatus
-	AITaskCompleted   bool
+	LoginAITask       PointsTaskStatus
+	UsageTask         PointsTaskStatus
+	AIPointsTask      PointsTaskStatus
 	AITask            JobStatus
 	PointsTask        JobStatus
 	RedeemTask        JobStatus

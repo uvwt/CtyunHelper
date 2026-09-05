@@ -52,7 +52,9 @@ func (f *AuthFlow) Restore(account string) (bool, error) {
 	f.client.UseProfile(profile)
 	f.model.Update(func(state *State) {
 		state.Account = account
-		state.AITaskCompleted = false
+		state.LoginAITask = PointsTaskStatus{}
+		state.UsageTask = PointsTaskStatus{}
+		state.AIPointsTask = PointsTaskStatus{}
 		state.LastError = ""
 		if profile.BondedDevice {
 			state.Connection = ConnectionStopped
@@ -135,7 +137,9 @@ func (f *AuthFlow) CommitLogin(account string, profile auth.Profile) {
 	f.client.UseProfile(profile)
 	f.model.Update(func(state *State) {
 		state.Account = account
-		state.AITaskCompleted = false
+		state.LoginAITask = PointsTaskStatus{}
+		state.UsageTask = PointsTaskStatus{}
+		state.AIPointsTask = PointsTaskStatus{}
 		state.LastError = ""
 		if profile.BondedDevice {
 			state.Connection = ConnectionStopped
@@ -233,8 +237,9 @@ func (f *AuthFlow) Logout() error {
 		state.DesktopName = ""
 		state.OnlineSince = time.Time{}
 		state.Points = 0
-		state.UsageTask = UsageTaskStatus{}
-		state.AITaskCompleted = false
+		state.LoginAITask = PointsTaskStatus{}
+		state.UsageTask = PointsTaskStatus{}
+		state.AIPointsTask = PointsTaskStatus{}
 		state.Connection = ConnectionAuth
 		state.LastError = message
 	})

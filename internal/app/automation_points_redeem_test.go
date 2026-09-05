@@ -59,8 +59,9 @@ func TestTaskAutomationRefreshPointsIsReadOnlyAndPublishesUsage(t *testing.T) {
 	model := NewModel(State{Account: "account", Connection: ConnectionOnline})
 	client := &appPointsRedeemClient{
 		tasks: []points.Task{
-			{Name: automation.UsageTaskName, Status: automation.TaskDone, CurrentProgress: 60},
-			{Name: automation.AITaskName, Status: automation.TaskDone},
+			{Name: automation.LoginAITaskName, Status: automation.TaskDone, CurrentProgress: 1},
+			{Name: automation.UsageTaskName, Status: automation.TaskDone, CurrentProgress: 3600},
+			{Name: automation.AITaskName, Status: automation.TaskDone, CurrentProgress: 1},
 		},
 		value: 650,
 	}
@@ -69,7 +70,7 @@ func TestTaskAutomationRefreshPointsIsReadOnlyAndPublishesUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := model.Snapshot()
-	if state.Points != 650 || !state.UsageTask.Found || state.UsageTask.Status != automation.TaskDone || !state.AITaskCompleted || state.RedeemEnabled {
+	if state.Points != 650 || !state.LoginAITask.Found || state.LoginAITask.Status != automation.TaskDone || state.LoginAITask.Progress != 1 || !state.UsageTask.Found || state.UsageTask.Status != automation.TaskDone || state.UsageTask.Progress != 3600 || !state.AIPointsTask.Found || state.AIPointsTask.Status != automation.TaskDone || state.AIPointsTask.Progress != 1 || state.RedeemEnabled {
 		t.Fatalf("state = %#v", state)
 	}
 	if client.placeCalls != 0 || guard.Snapshot().DailyActions[automation.ActionRedeem] != 0 {

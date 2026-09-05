@@ -8,15 +8,22 @@ import (
 	"github.com/uvwt/CtyunHelper/internal/ctyun/points"
 )
 
-const UsageTaskName = "使用1小时"
+const (
+	LoginAITaskName = "登录AI云电脑"
+	UsageTaskName   = "使用1小时"
+)
 
 type PointsSnapshot struct {
-	Points          int
-	UsageTaskFound  bool
-	UsageTaskStatus int
-	UsageProgress   int
-	AITaskFound     bool
-	AITaskStatus    int
+	Points            int
+	LoginAITaskFound  bool
+	LoginAITaskStatus int
+	LoginAIProgress   int
+	UsageTaskFound    bool
+	UsageTaskStatus   int
+	UsageProgress     int
+	AITaskFound       bool
+	AITaskStatus      int
+	AITaskProgress    int
 }
 
 type pointsStatusClient interface {
@@ -111,6 +118,10 @@ func (j *PointsJob) readTask(ctx context.Context) (PointsSnapshot, error) {
 	snapshot := PointsSnapshot{}
 	for _, task := range tasks {
 		switch task.Name {
+		case LoginAITaskName:
+			snapshot.LoginAITaskFound = true
+			snapshot.LoginAITaskStatus = task.Status
+			snapshot.LoginAIProgress = task.CurrentProgress
 		case UsageTaskName:
 			snapshot.UsageTaskFound = true
 			snapshot.UsageTaskStatus = task.Status
@@ -118,6 +129,7 @@ func (j *PointsJob) readTask(ctx context.Context) (PointsSnapshot, error) {
 		case AITaskName:
 			snapshot.AITaskFound = true
 			snapshot.AITaskStatus = task.Status
+			snapshot.AITaskProgress = task.CurrentProgress
 		}
 	}
 	return snapshot, nil

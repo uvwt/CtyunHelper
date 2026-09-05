@@ -177,16 +177,17 @@ var (
 )
 
 type homeStatusControls struct {
-	connection    uintptr
+	keepalive     uintptr
 	desktop       uintptr
 	points        uintptr
-	usage         uintptr
-	redeemDesktop uintptr
-	pointsJob     uintptr
-	aiJob         uintptr
+	pointsSync    uintptr
 	redeem        uintptr
+	redeemDesktop uintptr
 	redeemProduct uintptr
 	lastError     uintptr
+	loginAITask   uintptr
+	usageTask     uintptr
+	aiPointsTask  uintptr
 }
 
 const (
@@ -418,44 +419,50 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 }
 
 func createStatusText(hwnd, instance uintptr) {
-	createControl("BUTTON", "运行状态", wsChild|wsVisible|bsGroupBox, 24, 20, 840, 250, hwnd, 0, instance)
+	// 首页按优先级分成两层：核心运行状态在上，天翼服务端积分任务独立成组。
+	// “积分同步”只是本地只读刷新 Job，不再和服务端积分任务混为一谈。
+	createControl("BUTTON", "核心状态", wsChild|wsVisible|bsGroupBox, 24, 20, 840, 164, hwnd, 0, instance)
 
-	createLabel(hwnd, instance, "连接状态", 46, 48, 96, 24)
-	homeStatus.connection = createLabel(hwnd, instance, "", 146, 48, 250, 24)
-	createLabel(hwnd, instance, "当前云电脑", 46, 84, 96, 24)
-	homeStatus.desktop = createLabel(hwnd, instance, "", 146, 84, 250, 24)
-	createLabel(hwnd, instance, "当前积分", 46, 120, 96, 24)
-	homeStatus.points = createLabel(hwnd, instance, "", 146, 120, 250, 24)
-	createLabel(hwnd, instance, "使用1小时", 46, 156, 96, 24)
-	homeStatus.usage = createLabel(hwnd, instance, "", 146, 156, 250, 24)
-	createLabel(hwnd, instance, "配置云电脑", 46, 192, 96, 24)
-	homeStatus.redeemDesktop = createLabel(hwnd, instance, "", 146, 192, 250, 24)
+	createLabel(hwnd, instance, "保活状态", 46, 48, 96, 24)
+	homeStatus.keepalive = createLabel(hwnd, instance, "", 146, 48, 260, 24)
+	createLabel(hwnd, instance, "当前云电脑", 46, 82, 96, 24)
+	homeStatus.desktop = createLabel(hwnd, instance, "", 146, 82, 260, 24)
+	createLabel(hwnd, instance, "当前积分", 46, 116, 96, 24)
+	homeStatus.points = createLabel(hwnd, instance, "", 146, 116, 260, 24)
+	createLabel(hwnd, instance, "积分同步", 46, 150, 96, 24)
+	homeStatus.pointsSync = createLabel(hwnd, instance, "", 146, 150, 260, 24)
 
-	createLabel(hwnd, instance, "积分刷新", 430, 48, 96, 24)
-	homeStatus.pointsJob = createLabel(hwnd, instance, "", 530, 48, 304, 24)
-	createLabel(hwnd, instance, "AI任务", 430, 84, 96, 24)
-	homeStatus.aiJob = createLabel(hwnd, instance, "", 530, 84, 304, 24)
-	createLabel(hwnd, instance, "自动兑换", 430, 120, 96, 24)
-	homeStatus.redeem = createLabel(hwnd, instance, "", 530, 120, 304, 24)
-	createLabel(hwnd, instance, "兑换商品", 430, 156, 96, 24)
-	homeStatus.redeemProduct = createLabel(hwnd, instance, "", 530, 156, 304, 24)
-	createLabel(hwnd, instance, "最近异常", 430, 192, 96, 24)
-	homeStatus.lastError = createLabel(hwnd, instance, "", 530, 192, 304, 42)
+	createLabel(hwnd, instance, "自动兑换", 430, 48, 96, 24)
+	homeStatus.redeem = createLabel(hwnd, instance, "", 530, 48, 304, 24)
+	createLabel(hwnd, instance, "配置云电脑", 430, 82, 96, 24)
+	homeStatus.redeemDesktop = createLabel(hwnd, instance, "", 530, 82, 304, 24)
+	createLabel(hwnd, instance, "兑换商品", 430, 116, 96, 24)
+	homeStatus.redeemProduct = createLabel(hwnd, instance, "", 530, 116, 304, 24)
+	createLabel(hwnd, instance, "最近异常", 430, 150, 96, 24)
+	homeStatus.lastError = createLabel(hwnd, instance, "", 530, 150, 304, 24)
+
+	createControl("BUTTON", "积分任务", wsChild|wsVisible|bsGroupBox, 24, 194, 840, 82, hwnd, 0, instance)
+	createLabel(hwnd, instance, "登录AI云电脑", 46, 224, 100, 24)
+	homeStatus.loginAITask = createLabel(hwnd, instance, "", 150, 224, 118, 24)
+	createLabel(hwnd, instance, "使用1小时", 308, 224, 80, 24)
+	homeStatus.usageTask = createLabel(hwnd, instance, "", 392, 224, 120, 24)
+	createLabel(hwnd, instance, "与AI对话1次", 552, 224, 100, 24)
+	homeStatus.aiPointsTask = createLabel(hwnd, instance, "", 656, 224, 178, 24)
 }
 
 func createActionButtons(hwnd, instance uintptr) {
-	createControl("BUTTON", "快捷操作", wsChild|wsVisible|bsGroupBox, 24, 284, 840, 150, hwnd, 0, instance)
+	createControl("BUTTON", "快捷操作", wsChild|wsVisible|bsGroupBox, 24, 294, 840, 150, hwnd, 0, instance)
 
-	loginButton = createControl("BUTTON", "账号登录", wsChild|wsVisible|wsTabStop|bsPushButton, 46, 314, 174, 38, hwnd, buttonLogin, instance)
-	bindButton = createControl("BUTTON", "设备绑定", wsChild|wsVisible|wsTabStop|bsPushButton, 232, 314, 154, 38, hwnd, buttonBind, instance)
-	aiButton = createControl("BUTTON", "执行 AI 任务", wsChild|wsVisible|wsTabStop|bsPushButton, 398, 314, 164, 38, hwnd, buttonAI, instance)
-	pointsButton = createControl("BUTTON", "刷新积分", wsChild|wsVisible|wsTabStop|bsPushButton, 574, 314, 134, 38, hwnd, buttonPoints, instance)
-	redeemButton = createControl("BUTTON", "检查兑换", wsChild|wsVisible|wsTabStop|bsPushButton, 720, 314, 122, 38, hwnd, buttonRedeem, instance)
+	loginButton = createControl("BUTTON", "账号登录", wsChild|wsVisible|wsTabStop|bsPushButton, 46, 324, 174, 38, hwnd, buttonLogin, instance)
+	bindButton = createControl("BUTTON", "设备绑定", wsChild|wsVisible|wsTabStop|bsPushButton, 232, 324, 154, 38, hwnd, buttonBind, instance)
+	aiButton = createControl("BUTTON", "执行 AI 任务", wsChild|wsVisible|wsTabStop|bsPushButton, 398, 324, 164, 38, hwnd, buttonAI, instance)
+	pointsButton = createControl("BUTTON", "刷新积分", wsChild|wsVisible|wsTabStop|bsPushButton, 574, 324, 134, 38, hwnd, buttonPoints, instance)
+	redeemButton = createControl("BUTTON", "检查兑换", wsChild|wsVisible|wsTabStop|bsPushButton, 720, 324, 122, 38, hwnd, buttonRedeem, instance)
 
-	settingsButton = createControl("BUTTON", "设置", wsChild|wsVisible|wsTabStop|bsPushButton, 46, 370, 122, 36, hwnd, buttonSettings, instance)
-	logsButton = createControl("BUTTON", "日志", wsChild|wsVisible|wsTabStop|bsPushButton, 180, 370, 122, 36, hwnd, buttonLogs, instance)
-	logoutButton = createControl("BUTTON", "退出账号", wsChild|wsVisible|wsTabStop|bsPushButton, 314, 370, 136, 36, hwnd, buttonLogout, instance)
-	redeemSettingsButton = createControl("BUTTON", "兑换设置", wsChild|wsVisible|wsTabStop|bsPushButton, 720, 370, 122, 36, hwnd, buttonRedeemSettings, instance)
+	settingsButton = createControl("BUTTON", "设置", wsChild|wsVisible|wsTabStop|bsPushButton, 46, 380, 122, 36, hwnd, buttonSettings, instance)
+	logsButton = createControl("BUTTON", "日志", wsChild|wsVisible|wsTabStop|bsPushButton, 180, 380, 122, 36, hwnd, buttonLogs, instance)
+	logoutButton = createControl("BUTTON", "退出账号", wsChild|wsVisible|wsTabStop|bsPushButton, 314, 380, 136, 36, hwnd, buttonLogout, instance)
+	redeemSettingsButton = createControl("BUTTON", "兑换设置", wsChild|wsVisible|wsTabStop|bsPushButton, 720, 380, 122, 36, hwnd, buttonRedeemSettings, instance)
 }
 
 func applySystemFont(hwnd uintptr) {
@@ -478,7 +485,7 @@ func createAppIconControl(parent, instance, icon, x, y, width, height uintptr) u
 }
 
 func updateStatusText(state app.State) {
-	if homeStatus.connection == 0 {
+	if homeStatus.keepalive == 0 {
 		return
 	}
 	jobsRunning := state.AITask.Running || state.PointsTask.Running || state.RedeemTask.Running
@@ -535,8 +542,8 @@ func updateStatusText(state app.State) {
 		enableWindow.Call(logoutButton, enabled)
 	}
 
-	connection, connectionColor := connectionStatusText(state.Connection)
-	setHomeStatusState(homeStatus.connection, connection, connectionColor)
+	keepalive, keepaliveColor := connectionStatusText(state.Connection)
+	setHomeStatusState(homeStatus.keepalive, keepalive, keepaliveColor)
 
 	desktopName := state.DesktopName
 	desktopColor := statusColorInfo
@@ -547,8 +554,11 @@ func updateStatusText(state app.State) {
 	setHomeStatusValue(homeStatus.desktop, desktopName, desktopColor)
 	setHomeStatusValue(homeStatus.points, fmt.Sprintf("%d", state.Points), statusColorInfo)
 
-	usage, usageColor := usageStatusText(state.UsageTask)
-	setHomeStatusState(homeStatus.usage, usage, usageColor)
+	pointsSync, pointsSyncColor := jobStatusText(state.PointsTask, "刷新中", false)
+	setHomeStatusState(homeStatus.pointsSync, pointsSync, pointsSyncColor)
+
+	redeemStatus, redeemColor := redeemHomeStatusText(state)
+	setHomeStatusState(homeStatus.redeem, redeemStatus, redeemColor)
 
 	configuredDesktop := state.RedeemDesktopName
 	configuredDesktopColor := statusColorInfo
@@ -557,15 +567,6 @@ func updateStatusText(state app.State) {
 		configuredDesktopColor = statusColorMuted
 	}
 	setHomeStatusValue(homeStatus.redeemDesktop, configuredDesktop, configuredDesktopColor)
-
-	pointsStatus, pointsColor := jobStatusText(state.PointsTask, "刷新中", false)
-	setHomeStatusState(homeStatus.pointsJob, pointsStatus, pointsColor)
-
-	aiStatus, aiColor := aiHomeStatusText(state)
-	setHomeStatusState(homeStatus.aiJob, aiStatus, aiColor)
-
-	redeemStatus, redeemColor := redeemHomeStatusText(state)
-	setHomeStatusState(homeStatus.redeem, redeemStatus, redeemColor)
 
 	configuredProduct := state.RedeemProductName
 	configuredProductColor := statusColorInfo
@@ -584,6 +585,13 @@ func updateStatusText(state app.State) {
 		lastErrorColor = statusColorSuccess
 	}
 	setHomeStatusState(homeStatus.lastError, lastError, lastErrorColor)
+
+	loginAI, loginAIColor := pointsTaskStatusText(state.LoginAITask)
+	setHomeStatusState(homeStatus.loginAITask, loginAI, loginAIColor)
+	usage, usageColor := pointsTaskStatusText(state.UsageTask)
+	setHomeStatusState(homeStatus.usageTask, usage, usageColor)
+	aiPoints, aiPointsColor := pointsTaskStatusText(state.AIPointsTask)
+	setHomeStatusState(homeStatus.aiPointsTask, aiPoints, aiPointsColor)
 }
 
 func setHomeStatusState(control uintptr, text string, color uint32) {
@@ -625,14 +633,17 @@ func connectionStatusText(state app.ConnectionState) (string, uint32) {
 	}
 }
 
-func usageStatusText(status app.UsageTaskStatus) (string, uint32) {
+func pointsTaskStatusText(status app.PointsTaskStatus) (string, uint32) {
 	if !status.Found {
 		return "等待刷新", statusColorMuted
 	}
 	if status.Status == 2 {
 		return "已完成", statusColorSuccess
 	}
-	return fmt.Sprintf("进行中（status=%d, progress=%d）", status.Status, status.Progress), statusColorWarning
+	if status.Progress > 0 {
+		return fmt.Sprintf("进行中（进度 %d）", status.Progress), statusColorWarning
+	}
+	return "待完成", statusColorWarning
 }
 
 func jobStatusText(status app.JobStatus, runningText string, paused bool) (string, uint32) {
@@ -649,18 +660,6 @@ func jobStatusText(status app.JobStatus, runningText string, paused bool) (strin
 		return "已完成（" + status.LastRun.Format("01-02 15:04") + "）", statusColorSuccess
 	}
 	return "等待首次执行", statusColorMuted
-}
-
-func aiHomeStatusText(state app.State) (string, uint32) {
-	text, color := jobStatusText(state.AITask, "运行中", state.AutomationPaused)
-	if state.AITaskCompleted && !state.AutomationPaused && !state.AITask.Running && state.AITask.LastError == "" {
-		text = "已完成"
-		color = statusColorSuccess
-	}
-	if !state.AITask.NextRun.IsZero() {
-		text += "；下次 " + state.AITask.NextRun.Format("01-02 15:04")
-	}
-	return text, color
 }
 
 func redeemHomeStatusText(state app.State) (string, uint32) {

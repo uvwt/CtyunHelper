@@ -13,10 +13,10 @@ import (
 	"time"
 )
 
-func TestNativeLoginHTTPFlow(t *testing.T) {
+func TestNativeLoginHTTPFlowStartsWithoutCaptcha(t *testing.T) {
 	fixedNow := time.UnixMilli(1700000000000)
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	captchaCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/auth/client/genChallengeData":
 			if r.Method != http.MethodPost || r.Header.Get("CTG-DEVICECODE") != "device-code" {
@@ -24,6 +24,7 @@ func TestNativeLoginHTTPFlow(t *testing.T) {
 			}
 			json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"challengeId": "challenge-id", "challengeCode": "salt"}})
 		case "/api/auth/client/captcha":
+			captchaCalls++
 			w.Header().Set("CTG-CAPTCHA-KEY", "captcha-key")
 			w.Write([]byte("0123456789abcdefghijklmnop"))
 		case "/api/auth/client/login":
@@ -32,8 +33,8 @@ func TestNativeLoginHTTPFlow(t *testing.T) {
 			if got := form.Get("password"); got != LoginPassword("password", "salt") {
 				t.Fatalf("password digest = %s", got)
 			}
-			if form.Get("captchaCodeKey") != "captcha-key" || form.Get("captchaCode") != "4321" {
-				t.Fatalf("captcha fields = %v", form)
+			if form.Get("captchaCodeKey") != "" || form.Get("captchaCode") != "" {
+				t.Fatalf("normal login must not send captcha fields: %v", form)
 			}
 			json.NewEncoder(w).Encode(map[string]any{
 				"code": 0,
@@ -59,10 +60,10 @@ func TestNativeLoginHTTPFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if challenge.CaptchaKey != "captcha-key" || len(challenge.Captcha) == 0 {
-		t.Fatalf("challenge = %#v", challenge)
+	if captchaCalls != 0 {
+		t.Fatalf("captcha calls before server request = %d", captchaCalls)
 	}
-	profile, err := client.Login(context.Background(), "account", "password", "4321", challenge)
+	profile, err := client.Login(context.Background(), "account", "password", "", "", challenge)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +72,22 @@ func TestNativeLoginHTTPFlow(t *testing.T) {
 	}
 	if _, ok := client.Profile(); ok {
 		t.Fatal("low-level Login must not install candidate profile before app persistence succeeds")
+	}
+}
+
+func TestLoginCaptchaIsFetchedOnlyWhenRequested(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("CTG-CAPTCHA-KEY", "captcha-key")
+		w.Write([]byte("0123456789abcdefghijklmnop"))
+	}))
+	defer server.Close()
+	client := NewClient(DeviceIdentity{Code: "device-code"}, ClientOptions{APIOrigin: server.URL, HTTPClient: server.Client()})
+	captcha, err := client.GetLoginCaptcha(context.Background(), "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if captcha.Key != "captcha-key" || len(captcha.Image) == 0 {
+		t.Fatalf("captcha = %#v", captcha)
 	}
 }
 
@@ -107,5 +124,11 @@ func TestAPIErrorClassificationSurvivesWrapping(t *testing.T) {
 	wrappedBind := fmt.Errorf("desktop: %w", APIError{Code: CodeDeviceUnbound, Message: "unbind"})
 	if !RequiresDeviceBinding(wrappedBind) || RequiresAuthentication(wrappedBind) {
 		t.Fatalf("binding classification failed: %v", wrappedBind)
+	}
+	for _, code := range []int{CodeNeedCaptcha, CodeEmptyCaptcha, CodeInvalidCaptcha, CodeExpiredCaptcha} {
+		wrappedCaptcha := fmt.Errorf("login: %w", APIError{Code: code, Message: "captcha"})
+		if !RequiresLoginCaptcha(wrappedCaptcha) {
+			t.Fatalf("captcha code %d was not classified", code)
+		}
 	}
 }

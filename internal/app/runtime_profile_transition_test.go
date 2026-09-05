@@ -32,17 +32,20 @@ func (s *profileAwareSession) Run(ctx context.Context) error {
 
 func TestRuntimeStopsOldSessionBeforeCommittingNewProfile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/auth/client/login" {
+		switch r.URL.Path {
+		case "/api/auth/client/genChallengeData":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"challengeId": "challenge", "challengeCode": "salt"}})
+		case "/api/auth/client/login":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"data": map[string]any{
+					"userId": 2, "userEid": "new-eid", "tenantId": 3,
+					"secretKey": "new-key", "commonLoginReqHeader": "new-common", "bondedDevice": true,
+				},
+			})
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"code": 0,
-			"data": map[string]any{
-				"userId": 2, "userEid": "new-eid", "tenantId": 3,
-				"secretKey": "new-key", "commonLoginReqHeader": "new-common", "bondedDevice": true,
-			},
-		})
 	}))
 	defer server.Close()
 
@@ -62,8 +65,7 @@ func TestRuntimeStopsOldSessionBeforeCommittingNewProfile(t *testing.T) {
 		t.Fatal("old session did not start")
 	}
 
-	challenge := auth.LoginChallenge{ID: "challenge", Code: "salt", CaptchaKey: "captcha-key"}
-	if _, err := runtime.CompleteLogin(context.Background(), "new-account", "password", "1234", challenge); err != nil {
+	if _, err := runtime.CompleteLogin(context.Background(), "new-account", "password", "1234", "captcha-key"); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -121,7 +123,7 @@ func TestRuntimeAccountSwitchCannotRaceRunningPointsOperation(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("points operation did not start")
 	}
-	_, err = runtime.CompleteLogin(context.Background(), "new-account", "password", "1234", auth.LoginChallenge{ID: "x", Code: "y"})
+	_, err = runtime.CompleteLogin(context.Background(), "new-account", "password", "1234", "captcha-key")
 	if err == nil || err.Error() != "app: 自动任务正在运行，暂不能更换账号" {
 		t.Fatalf("CompleteLogin() error = %v", err)
 	}

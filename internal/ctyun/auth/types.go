@@ -40,6 +40,20 @@ func WindowsIdentity() ClientIdentity {
 	}
 }
 
+// LegacyClinkIdentity 是旧 CtYun 保活链实际使用的终端身份。
+// 它只服务 Clink 专用登录、列表和 connect，不替代现代 Windows 客户端身份。
+func LegacyClinkIdentity() ClientIdentity {
+	const windowsBrowser = "Windows NT 10.0; Win64; x64"
+	return ClientIdentity{
+		Version:     "103020001",
+		AppVersion:  "3.2.0",
+		DeviceType:  "60",
+		DeviceName:  "Chrome浏览器",
+		DeviceModel: windowsBrowser,
+		SysVersion:  windowsBrowser,
+	}
+}
+
 func (i ClientIdentity) withDefaults() ClientIdentity {
 	defaults := WindowsIdentity()
 	if i.Version == "" {

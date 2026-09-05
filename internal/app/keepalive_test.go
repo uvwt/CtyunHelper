@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -17,13 +18,43 @@ type fakeDesktopService struct {
 	resolvedID string
 }
 
-func (f *fakeDesktopService) List(context.Context) ([]desktop.Desktop, error) {
+func (f *fakeDesktopService) ListForKeepalive(context.Context) ([]desktop.Desktop, error) {
 	return f.values, f.listErr
 }
 
-func (f *fakeDesktopService) ResolveConnection(_ context.Context, value desktop.Desktop) (desktop.ConnectionInfo, error) {
+func (f *fakeDesktopService) ResolveClinkConnection(_ context.Context, value desktop.Desktop) (desktop.ConnectionInfo, error) {
 	f.resolvedID = value.ID()
 	return f.connection, f.connectErr
+}
+
+type fakeClinkAuthStore struct {
+	profile auth.Profile
+}
+
+func (s *fakeClinkAuthStore) LoadLogin() (string, string, error) {
+	return "", "", errors.New("unexpected Clink refresh")
+}
+
+func (s *fakeClinkAuthStore) SaveClinkProfile(string, auth.Profile) error { return nil }
+
+func (s *fakeClinkAuthStore) LoadClinkProfile(string) (auth.Profile, error) {
+	return s.profile, nil
+}
+
+func (s *fakeClinkAuthStore) DeleteClinkProfile() error { return nil }
+
+func newKeepaliveForTest(primary *auth.Client, desktops desktopService, model *Model) *Keepalive {
+	clinkClient := auth.NewClient(auth.DeviceIdentity{Code: "device-code"}, auth.ClientOptions{})
+	store := &fakeClinkAuthStore{profile: auth.Profile{
+		UserID: 123, UserName: "tester", TenantID: 456,
+		SecretKey: "secret", CommonLoginReqHeader: "common",
+	}}
+	return &Keepalive{
+		primaryAuth: primary,
+		clinkAuth:   newClinkAuthFlow(clinkClient, store, nil),
+		desktops:    desktops,
+		model:       model,
+	}
 }
 
 func TestKeepaliveRunsDesktopResolveAndRealClinkWorker(t *testing.T) {
@@ -42,7 +73,7 @@ func TestKeepaliveRunsDesktopResolveAndRealClinkWorker(t *testing.T) {
 		},
 	}
 	model := NewModel(State{Account: "account"})
-	keepalive := &Keepalive{auth: authClient, desktops: desktops, model: model}
+	keepalive := newKeepaliveForTest(authClient, desktops, model)
 
 	events, unsubscribe := model.Events().Subscribe(16)
 	defer unsubscribe()
@@ -89,7 +120,7 @@ waitBackoff:
 func TestKeepaliveRequiresAuthenticatedProfile(t *testing.T) {
 	authClient := auth.NewClient(auth.DeviceIdentity{Code: "device-code"}, auth.ClientOptions{})
 	model := NewModel(State{})
-	keepalive := &Keepalive{auth: authClient, desktops: &fakeDesktopService{}, model: model}
+	keepalive := newKeepaliveForTest(authClient, &fakeDesktopService{}, model)
 	err := keepalive.Run(context.Background())
 	if err == nil {
 		t.Fatalf("Run() error = %v", err)
@@ -99,14 +130,14 @@ func TestKeepaliveRequiresAuthenticatedProfile(t *testing.T) {
 	}
 }
 
-func TestKeepaliveMapsProtocolErrorsToActionableState(t *testing.T) {
+func TestKeepaliveKeepsLegacyProtocolErrorsOutOfPrimaryAuthState(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
 		want ConnectionState
 	}{
-		{name: "auth", err: auth.APIError{Code: auth.CodeNoPermissions, Message: "expired"}, want: ConnectionAuth},
-		{name: "device binding", err: auth.APIError{Code: auth.CodeDeviceUnbound, Message: "unbind"}, want: ConnectionDeviceBind},
+		{name: "auth", err: auth.APIError{Code: auth.CodeNoPermissions, Message: "expired"}, want: ConnectionBackoff},
+		{name: "device binding", err: auth.APIError{Code: auth.CodeDeviceUnbound, Message: "unbind"}, want: ConnectionBackoff},
 		{name: "network", err: context.DeadlineExceeded, want: ConnectionBackoff},
 	}
 	for _, tt := range tests {
@@ -114,7 +145,7 @@ func TestKeepaliveMapsProtocolErrorsToActionableState(t *testing.T) {
 			authClient := auth.NewClient(auth.DeviceIdentity{Code: "device-code"}, auth.ClientOptions{})
 			authClient.UseProfile(auth.Profile{UserID: 123})
 			model := NewModel(State{})
-			keepalive := &Keepalive{auth: authClient, desktops: &fakeDesktopService{listErr: tt.err}, model: model}
+			keepalive := newKeepaliveForTest(authClient, &fakeDesktopService{listErr: tt.err}, model)
 			if err := keepalive.Run(context.Background()); err == nil {
 				t.Fatal("Run() expected error")
 			}

@@ -309,6 +309,10 @@ const (
 	CodeNodeSignatureMismatch = 30021
 	CodeDeviceUnbound         = 30060
 	CodeNoPermissions         = 40010
+	CodeInvalidCaptcha        = 51030
+	CodeExpiredCaptcha        = 51031
+	CodeEmptyCaptcha          = 51032
+	CodeNeedCaptcha           = 51040
 )
 
 func ErrorCode(err error) (int, bool) {
@@ -327,6 +331,19 @@ func RequiresAuthentication(err error) bool {
 func RequiresDeviceBinding(err error) bool {
 	code, ok := ErrorCode(err)
 	return ok && code == CodeDeviceUnbound
+}
+
+func RequiresLoginCaptcha(err error) bool {
+	code, ok := ErrorCode(err)
+	if !ok {
+		return false
+	}
+	switch code {
+	case CodeNeedCaptcha, CodeEmptyCaptcha, CodeInvalidCaptcha, CodeExpiredCaptcha:
+		return true
+	default:
+		return false
+	}
 }
 
 // InvalidateServerData 只清理指定 Host 的节点缓存。节点签名失败后下一次请求会重新发现，

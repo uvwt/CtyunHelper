@@ -278,11 +278,11 @@ func (r *Runtime) LoadStoredLogin() (account, password string, err error) {
 	return r.auth.LoadStoredLogin()
 }
 
-func (r *Runtime) BeginLogin(ctx context.Context, account string) (auth.LoginChallenge, error) {
-	return r.auth.BeginLogin(ctx, account)
+func (r *Runtime) BeginLoginCaptcha(ctx context.Context, account string) (auth.LoginCaptcha, error) {
+	return r.auth.BeginLoginCaptcha(ctx, account)
 }
 
-func (r *Runtime) CompleteLogin(ctx context.Context, account, password, captchaCode string, challenge auth.LoginChallenge) (auth.Profile, error) {
+func (r *Runtime) CompleteLogin(ctx context.Context, account, password, captchaCode, captchaKey string) (auth.Profile, error) {
 	if r.automation != nil {
 		if !r.automation.activityMu.TryLock() {
 			return auth.Profile{}, fmt.Errorf("app: 自动任务正在运行，暂不能更换账号")
@@ -295,7 +295,7 @@ func (r *Runtime) CompleteLogin(ctx context.Context, account, password, captchaC
 	if state := r.model.Snapshot(); state.AITask.Running || state.PointsTask.Running || state.RedeemTask.Running {
 		return auth.Profile{}, fmt.Errorf("app: 自动任务正在运行，暂不能更换账号")
 	}
-	profile, err := r.auth.CompleteLogin(ctx, account, password, captchaCode, challenge)
+	profile, err := r.auth.CompleteLogin(ctx, account, password, captchaCode, captchaKey)
 	if err != nil {
 		return auth.Profile{}, err
 	}

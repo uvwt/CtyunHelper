@@ -46,19 +46,26 @@ var (
 )
 
 type loginDialogState struct {
-	mu           sync.Mutex
-	hwnd         uintptr
-	owner        uintptr
-	accountEdit  uintptr
-	passwordEdit uintptr
-	captchaEdit  uintptr
-	captchaView  uintptr
-	challenge    auth.LoginChallenge
-	challengeFor string
-	bitmap       uintptr
-	resultErr    error
-	bonded       bool
-	busy         bool
+	mu                sync.Mutex
+	hwnd              uintptr
+	owner             uintptr
+	accountEdit       uintptr
+	passwordEdit      uintptr
+	captchaLabel      uintptr
+	captchaView       uintptr
+	captchaInputLabel uintptr
+	captchaInput      uintptr
+	captchaRefresh    uintptr
+	loginButton       uintptr
+	noteText          uintptr
+	captchaKey        string
+	captchaFor        string
+	captchaImage      []byte
+	captchaNeeded     bool
+	bitmap            uintptr
+	resultErr         error
+	bonded            bool
+	busy              bool
 }
 
 type bindingDialogState struct {
@@ -114,7 +121,7 @@ func openLoginWindow(owner uintptr) {
 	title := utf16Ptr("登录天翼云电脑")
 	hwnd, _, callErr := createWindowExW.Call(
 		0, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(title)), wsOverlappedWindow,
-		cwUseDefault, cwUseDefault, 520, 410,
+		cwUseDefault, cwUseDefault, 520, 360,
 		owner, 0, instance, 0,
 	)
 	if hwnd == 0 {
@@ -137,17 +144,50 @@ func openLoginWindow(owner uintptr) {
 }
 
 func createLoginControls(state *loginDialogState, instance uintptr) {
-	createLabel(state.hwnd, instance, "账号", 24, 24, 80, 24)
-	state.accountEdit = createControl("EDIT", "", wsChild|wsVisible|wsBorder|wsTabStop|esAutoHScroll, 110, 20, 350, 28, state.hwnd, 0, instance)
-	createLabel(state.hwnd, instance, "密码", 24, 66, 80, 24)
-	state.passwordEdit = createControl("EDIT", "", wsChild|wsVisible|wsBorder|wsTabStop|esAutoHScroll|esPassword, 110, 62, 350, 28, state.hwnd, 0, instance)
-	createLabel(state.hwnd, instance, "图形验证码", 24, 110, 80, 24)
-	state.captchaView = createControl("STATIC", "", wsChild|wsVisible|ssBitmap, 110, 104, 120, 56, state.hwnd, 0, instance)
-	createControl("BUTTON", "获取 / 刷新", wsChild|wsVisible|wsTabStop|bsPushButton, 250, 111, 110, 32, state.hwnd, loginRefresh, instance)
-	createLabel(state.hwnd, instance, "验证码", 24, 180, 80, 24)
-	state.captchaEdit = createControl("EDIT", "", wsChild|wsVisible|wsBorder|wsTabStop|esAutoHScroll, 110, 176, 160, 28, state.hwnd, 0, instance)
-	createControl("BUTTON", "登录", wsChild|wsVisible|wsTabStop|bsPushButton, 110, 230, 120, 36, state.hwnd, loginSubmit, instance)
-	createLabel(state.hwnd, instance, "密码成功登录后只保存到 Windows Credential Manager。", 24, 300, 440, 36)
+	icon := appIconLarge
+	if icon == 0 {
+		icon, _, _ = loadIconW.Call(0, idiApplication)
+	}
+	createAppIconControl(state.hwnd, instance, icon, 28, 18, 32, 32)
+	createLabel(state.hwnd, instance, "登录天翼云电脑", 72, 18, 220, 26)
+	createControl("STATIC", "", wsChild|wsVisible|ssEtchedHoriz, 24, 60, 448, 2, state.hwnd, 0, instance)
+
+	createLabel(state.hwnd, instance, "账号", 32, 84, 72, 24)
+	state.accountEdit = createControl("EDIT", "", wsChild|wsVisible|wsBorder|wsTabStop|esAutoHScroll, 120, 80, 340, 28, state.hwnd, 0, instance)
+	createLabel(state.hwnd, instance, "密码", 32, 128, 72, 24)
+	state.passwordEdit = createControl("EDIT", "", wsChild|wsVisible|wsBorder|wsTabStop|esAutoHScroll|esPassword, 120, 124, 340, 28, state.hwnd, 0, instance)
+
+	// 官方客户端默认只展示账号密码。下面的验证码控件先创建为隐藏状态，
+	// 只有登录接口明确返回 51040/51032/51030/51031 时才展开。
+	state.captchaLabel = createControl("STATIC", "图形验证码", wsChild|ssLeft, 32, 176, 80, 24, state.hwnd, 0, instance)
+	state.captchaView = createControl("STATIC", "", wsChild|ssBitmap, 120, 166, 120, 56, state.hwnd, 0, instance)
+	state.captchaRefresh = createControl("BUTTON", "刷新", wsChild|wsTabStop|bsPushButton, 258, 174, 82, 32, state.hwnd, loginRefresh, instance)
+	state.captchaInputLabel = createControl("STATIC", "验证码", wsChild|ssLeft, 32, 238, 80, 24, state.hwnd, 0, instance)
+	state.captchaInput = createControl("EDIT", "", wsChild|wsBorder|wsTabStop|esAutoHScroll, 120, 234, 160, 28, state.hwnd, 0, instance)
+
+	state.loginButton = createControl("BUTTON", "登录", wsChild|wsVisible|wsTabStop|bsPushButton, 120, 174, 124, 36, state.hwnd, loginSubmit, instance)
+	state.noteText = createLabel(state.hwnd, instance, "正常情况下只需账号和密码；需要时会自动显示图形验证码。", 32, 226, 428, 26)
+}
+
+func showLoginCaptchaControls(state *loginDialogState) {
+	state.mu.Lock()
+	alreadyShown := state.captchaNeeded
+	state.captchaNeeded = true
+	state.mu.Unlock()
+	if alreadyShown {
+		return
+	}
+	// 图形验证码是同一次账号密码登录的续步。展开后冻结账号和密码，避免
+	// 用户在验证码阶段换凭据却绕过“每个登录流程只占一次额度”的边界。
+	enableWindow.Call(state.accountEdit, 0)
+	enableWindow.Call(state.passwordEdit, 0)
+	setWindowPosW.Call(state.hwnd, 0, 0, 0, 520, 500, swpNoMove|swpNoZOrder)
+	for _, control := range []uintptr{state.captchaLabel, state.captchaView, state.captchaRefresh, state.captchaInputLabel, state.captchaInput} {
+		showWindow.Call(control, swShow)
+	}
+	setWindowPosW.Call(state.loginButton, 0, 120, 286, 124, 36, swpNoZOrder)
+	setWindowPosW.Call(state.noteText, 0, 32, 340, 428, 40, swpNoZOrder)
+	setControlText(state.noteText, "服务端要求图形验证码。输入后再次登录；验证码错误或过期会自动刷新。")
 }
 
 func loginWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
@@ -174,15 +214,16 @@ func loginWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintp
 		state.mu.Lock()
 		err := state.resultErr
 		state.resultErr = nil
-		captcha := append([]byte(nil), state.challenge.Captcha...)
-		clear(state.challenge.Captcha)
-		state.challenge.Captcha = nil
+		captcha := append([]byte(nil), state.captchaImage...)
+		clear(state.captchaImage)
+		state.captchaImage = nil
 		state.busy = false
 		state.mu.Unlock()
 		if err != nil {
 			showMessage(hwnd, "验证码", err.Error(), mbIconError)
 			return 0
 		}
+		showLoginCaptchaControls(state)
 		bitmap, err := setPNGOnStatic(state.captchaView, captcha)
 		clear(captcha)
 		if err != nil {
@@ -190,8 +231,14 @@ func loginWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintp
 			return 0
 		}
 		state.mu.Lock()
+		oldBitmap := state.bitmap
 		state.bitmap = bitmap
 		state.mu.Unlock()
+		if oldBitmap != 0 {
+			deleteObject.Call(oldBitmap)
+		}
+		setControlText(state.captchaInput, "")
+		setControlText(state.noteText, "服务端要求图形验证码。输入后再次登录；验证码错误或过期会自动刷新。")
 		return 0
 	case wmLoginCompleted:
 		state.mu.Lock()
@@ -201,6 +248,11 @@ func loginWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintp
 		state.busy = false
 		state.mu.Unlock()
 		if err != nil {
+			if auth.RequiresLoginCaptcha(err) {
+				setControlText(state.noteText, "服务端要求或刷新了图形验证码，正在获取新验证码...")
+				startLoginCaptcha(state)
+				return 0
+			}
 			showMessage(hwnd, "登录失败", err.Error(), mbIconError)
 			return 0
 		}
@@ -230,7 +282,6 @@ func loginWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintp
 
 func startLoginCaptcha(state *loginDialogState) {
 	if !beginDialogWork(&state.mu, &state.busy) {
-		showMessage(state.hwnd, "登录", "当前操作尚未完成。", mbInformation)
 		return
 	}
 	account := strings.TrimSpace(readControlText(state.accountEdit))
@@ -239,20 +290,24 @@ func startLoginCaptcha(state *loginDialogState) {
 		showMessage(state.hwnd, "登录", "请输入账号。", mbIconError)
 		return
 	}
+	showLoginCaptchaControls(state)
+	setControlText(state.noteText, "正在获取图形验证码...")
 	state.mu.Lock()
-	clear(state.challenge.Captcha)
-	state.challenge = auth.LoginChallenge{}
-	state.challengeFor = ""
+	clear(state.captchaImage)
+	state.captchaImage = nil
+	state.captchaKey = ""
+	state.captchaFor = ""
 	state.mu.Unlock()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		challenge, err := uiRuntime.BeginLogin(ctx, account)
+		captcha, err := uiRuntime.BeginLoginCaptcha(ctx, account)
 		state.mu.Lock()
 		state.resultErr = err
 		if err == nil {
-			state.challenge = challenge
-			state.challengeFor = account
+			state.captchaImage = captcha.Image
+			state.captchaKey = captcha.Key
+			state.captchaFor = account
 		}
 		state.mu.Unlock()
 		postMessageW.Call(state.hwnd, wmLoginCaptchaReady, 0, 0)
@@ -261,30 +316,41 @@ func startLoginCaptcha(state *loginDialogState) {
 
 func startLoginSubmit(state *loginDialogState) {
 	if !beginDialogWork(&state.mu, &state.busy) {
-		showMessage(state.hwnd, "登录", "当前操作尚未完成。", mbInformation)
 		return
 	}
 	account := strings.TrimSpace(readControlText(state.accountEdit))
 	password := readControlText(state.passwordEdit)
-	captchaCode := strings.TrimSpace(readControlText(state.captchaEdit))
+	if account == "" || password == "" {
+		endDialogWork(&state.mu, &state.busy)
+		showMessage(state.hwnd, "登录", "请输入账号和密码。", mbIconError)
+		return
+	}
+
 	state.mu.Lock()
-	challenge := state.challenge
-	challengeFor := state.challengeFor
+	captchaNeeded := state.captchaNeeded
+	captchaKey := state.captchaKey
+	captchaFor := state.captchaFor
 	state.mu.Unlock()
-	if account == "" || password == "" || captchaCode == "" || challenge.ID == "" {
-		endDialogWork(&state.mu, &state.busy)
-		showMessage(state.hwnd, "登录", "请填写账号、密码和验证码，并先获取验证码。", mbIconError)
-		return
+	captchaCode := ""
+	if captchaNeeded {
+		if account != captchaFor {
+			endDialogWork(&state.mu, &state.busy)
+			setControlText(state.noteText, "账号已变化，正在刷新对应账号的图形验证码...")
+			startLoginCaptcha(state)
+			return
+		}
+		captchaCode = strings.TrimSpace(readControlText(state.captchaInput))
+		if captchaCode == "" || captchaKey == "" {
+			endDialogWork(&state.mu, &state.busy)
+			showMessage(state.hwnd, "登录", "请输入图形验证码。", mbIconError)
+			return
+		}
 	}
-	if account != challengeFor {
-		endDialogWork(&state.mu, &state.busy)
-		showMessage(state.hwnd, "登录", "账号已变化，请重新获取图形验证码。", mbIconError)
-		return
-	}
+
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
-		profile, err := uiRuntime.CompleteLogin(ctx, account, password, captchaCode, challenge)
+		profile, err := uiRuntime.CompleteLogin(ctx, account, password, captchaCode, captchaKey)
 		state.mu.Lock()
 		state.resultErr = err
 		state.bonded = err == nil && profile.BondedDevice
@@ -527,13 +593,20 @@ func ensureAuthWindowClasses() error {
 
 func registerDialogWindowClass(name string, proc func(uintptr, uint32, uintptr, uintptr) uintptr) error {
 	instance, _, _ := getModuleHandleW.Call(0)
-	icon, _, _ := loadIconW.Call(0, idiApplication)
+	icon := appIconLarge
+	if icon == 0 {
+		icon, _, _ = loadIconW.Call(0, idiApplication)
+	}
+	smallIcon := appIconSmall
+	if smallIcon == 0 {
+		smallIcon = icon
+	}
 	cursor, _, _ := loadCursorW.Call(0, idcArrow)
 	className := utf16Ptr(name)
 	class := wndClassEx{
 		Size: uint32(unsafe.Sizeof(wndClassEx{})), Style: csHRedraw | csVRedraw,
 		WndProc: syscall.NewCallback(proc), Instance: instance,
-		Icon: icon, Cursor: cursor, Background: colorWindow + 1, ClassName: className, IconSmall: icon,
+		Icon: icon, Cursor: cursor, Background: colorWindow + 1, ClassName: className, IconSmall: smallIcon,
 	}
 	atom, _, callErr := registerClassExW.Call(uintptr(unsafe.Pointer(&class)))
 	if atom == 0 {
@@ -553,6 +626,7 @@ func createControl(class, text string, style, x, y, width, height, parent, id, i
 		0, uintptr(unsafe.Pointer(classPtr)), uintptr(unsafe.Pointer(textPtr)), style,
 		x, y, width, height, parent, id, instance, 0,
 	)
+	applySystemFont(hwnd)
 	return hwnd
 }
 

@@ -1,5 +1,9 @@
 # Third-party notices
 
+## 天翼云电脑应用图标
+
+CtyunHelper 的应用图标以用户已安装的官方天翼云电脑客户端图标为视觉底图，并在右上角增加区别于官方客户端的 Helper 标识。天翼云电脑、中国电信及相关图形标识的权利归其各自权利人所有；CtyunHelper 是非官方辅助工具，与中国电信或天翼云电脑官方不存在隶属、授权或背书关系。
+
 ## leleji/CtYun
 
 CtyunHelper 的 Clink 协议研究参考了 `https://github.com/leleji/CtYun` 的公开源码。该项目采用 MIT License。CtyunHelper 不运行或分发其 `CtYun.dll`，相关协议代码在本项目中以 Go 重新实现。

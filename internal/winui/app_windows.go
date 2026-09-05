@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -20,6 +21,7 @@ const (
 	cwUseDefault         = ^uintptr(0x7fffffff)
 	wmDestroy            = 0x0002
 	wmClose              = 0x0010
+	wmSetFont            = 0x0030
 	wmCommand            = 0x0111
 	wmLButtonDblClk      = 0x0203
 	wmRButtonUp          = 0x0205
@@ -31,12 +33,20 @@ const (
 	wsVisible            = 0x10000000
 	wsChild              = 0x40000000
 	ssLeft               = 0x00000000
+	ssRight              = 0x00000002
+	ssIcon               = 0x00000003
+	ssEtchedHoriz        = 0x00000010
 	bsPushButton         = 0x00000000
+	bsGroupBox           = 0x00000007
+	stmSetIcon           = 0x0170
 	swHide               = 0
 	swShow               = 5
+	swpNoMove            = 0x0002
+	swpNoZOrder          = 0x0004
 	colorWindow          = 5
 	idiApplication       = 32512
 	idcArrow             = 32512
+	defaultGUIFont       = 17
 	mfString             = 0x0000
 	mfSeparator          = 0x0800
 	tpmRightButton       = 0x0002
@@ -125,6 +135,7 @@ type notifyIconData struct {
 var (
 	user32               = syscall.NewLazyDLL("user32.dll")
 	kernel32UI           = syscall.NewLazyDLL("kernel32.dll")
+	gdi32UI              = syscall.NewLazyDLL("gdi32.dll")
 	shell32              = syscall.NewLazyDLL("shell32.dll")
 	shcore               = syscall.NewLazyDLL("shcore.dll")
 	registerClassExW     = user32.NewProc("RegisterClassExW")
@@ -133,6 +144,7 @@ var (
 	showWindow           = user32.NewProc("ShowWindow")
 	updateWindow         = user32.NewProc("UpdateWindow")
 	setWindowTextW       = user32.NewProc("SetWindowTextW")
+	setWindowPosW        = user32.NewProc("SetWindowPos")
 	enableWindow         = user32.NewProc("EnableWindow")
 	messageBoxW          = user32.NewProc("MessageBoxW")
 	postMessageW         = user32.NewProc("PostMessageW")
@@ -156,6 +168,7 @@ var (
 	getModuleHandleW     = kernel32UI.NewProc("GetModuleHandleW")
 	createMutexW         = kernel32UI.NewProc("CreateMutexW")
 	closeHandle          = kernel32UI.NewProc("CloseHandle")
+	getStockObject       = gdi32UI.NewProc("GetStockObject")
 	shellNotifyIconW     = shell32.NewProc("Shell_NotifyIconW")
 )
 
@@ -182,6 +195,12 @@ func Run(buildRuntime func() (*app.Runtime, error), options RunOptions) error {
 	if buildRuntime == nil {
 		return fmt.Errorf("Windows UI 缺少 Runtime 构造函数")
 	}
+	// Win32 窗口和消息队列属于创建它们的 OS 线程。Go goroutine 默认可以
+	// 在线程之间迁移；如果创建窗口后迁到另一条线程再调用 GetMessage，原
+	// 窗口线程就可能无人泵消息，最终被 Windows 判定为“未响应”。整个 UI
+	// 生命周期固定在同一 OS 线程，后台网络任务仍使用普通 goroutine。
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	className := utf16Ptr("CtyunHelperWindow")
 	mutex, alreadyRunning, err := acquireSingleInstance()
 	if err != nil {
@@ -219,7 +238,12 @@ func Run(buildRuntime func() (*app.Runtime, error), options RunOptions) error {
 
 	title := utf16Ptr("天翼云电脑助手")
 	instance, _, _ := getModuleHandleW.Call(0)
-	icon, _, _ := loadIconW.Call(0, idiApplication)
+	fallbackIcon, _, _ := loadIconW.Call(0, idiApplication)
+	largeIcon, smallIcon := fallbackIcon, fallbackIcon
+	if err := loadBundledAppIcons(); err == nil {
+		largeIcon, smallIcon = appIconLarge, appIconSmall
+		defer releaseBundledAppIcons()
+	}
 	cursor, _, _ := loadCursorW.Call(0, idcArrow)
 
 	class := wndClassEx{
@@ -227,11 +251,11 @@ func Run(buildRuntime func() (*app.Runtime, error), options RunOptions) error {
 		Style:      csHRedraw | csVRedraw,
 		WndProc:    syscall.NewCallback(windowProc),
 		Instance:   instance,
-		Icon:       icon,
+		Icon:       largeIcon,
 		Cursor:     cursor,
 		Background: colorWindow + 1,
 		ClassName:  className,
-		IconSmall:  icon,
+		IconSmall:  smallIcon,
 	}
 	if atom, _, callErr := registerClassExW.Call(uintptr(unsafe.Pointer(&class))); atom == 0 {
 		return fmt.Errorf("注册 Windows 窗口类失败: %w", callErr)
@@ -242,7 +266,7 @@ func Run(buildRuntime func() (*app.Runtime, error), options RunOptions) error {
 		uintptr(unsafe.Pointer(className)),
 		uintptr(unsafe.Pointer(title)),
 		wsOverlappedWindow,
-		cwUseDefault, cwUseDefault, 900, 620,
+		cwUseDefault, cwUseDefault, 920, 530,
 		0, 0, instance, 0,
 	)
 	if hwnd == 0 {
@@ -251,7 +275,7 @@ func Run(buildRuntime func() (*app.Runtime, error), options RunOptions) error {
 	createStatusText(hwnd, instance)
 	createActionButtons(hwnd, instance)
 	updateStatusText(model.Snapshot())
-	if err := addTrayIcon(hwnd, icon); err != nil {
+	if err := addTrayIcon(hwnd, smallIcon); err != nil {
 		destroyWindow.Call(hwnd)
 		return err
 	}
@@ -360,83 +384,42 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 }
 
 func createStatusText(hwnd, instance uintptr) {
-	class := utf16Ptr("STATIC")
-	text := utf16Ptr("")
-	statusText, _, _ = createWindowExW.Call(
-		0,
-		uintptr(unsafe.Pointer(class)),
-		uintptr(unsafe.Pointer(text)),
-		wsChild|wsVisible|ssLeft,
-		24, 24, 820, 185,
-		hwnd, 0, instance, 0,
-	)
+	createControl("BUTTON", "运行状态", wsChild|wsVisible|bsGroupBox, 24, 20, 840, 250, hwnd, 0, instance)
+	statusText = createControl("STATIC", "", wsChild|wsVisible|ssLeft, 46, 48, 796, 204, hwnd, 0, instance)
 }
 
 func createActionButtons(hwnd, instance uintptr) {
-	class := utf16Ptr("BUTTON")
-	loginText := utf16Ptr("登录 / 更换账号")
-	loginButton, _, _ = createWindowExW.Call(
-		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(loginText)),
-		wsChild|wsVisible|bsPushButton,
-		24, 225, 150, 34,
-		hwnd, buttonLogin, instance, 0,
-	)
-	bindText := utf16Ptr("完成设备绑定")
-	bindButton, _, _ = createWindowExW.Call(
-		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(bindText)),
-		wsChild|wsVisible|bsPushButton,
-		186, 225, 150, 34,
-		hwnd, buttonBind, instance, 0,
-	)
-	aiText := utf16Ptr("立即执行 AI 任务")
-	aiButton, _, _ = createWindowExW.Call(
-		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(aiText)),
-		wsChild|wsVisible|bsPushButton,
-		348, 225, 150, 34,
-		hwnd, buttonAI, instance, 0,
-	)
-	pointsText := utf16Ptr("刷新积分")
-	pointsButton, _, _ = createWindowExW.Call(
-		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(pointsText)),
-		wsChild|wsVisible|bsPushButton,
-		510, 225, 120, 34,
-		hwnd, buttonPoints, instance, 0,
-	)
-	redeemText := utf16Ptr("检查 / 执行兑换")
-	redeemButton, _, _ = createWindowExW.Call(
-		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(redeemText)),
-		wsChild|wsVisible|bsPushButton,
-		642, 225, 165, 34,
-		hwnd, buttonRedeem, instance, 0,
-	)
-	redeemSettingsText := utf16Ptr("兑换设置")
-	redeemSettingsButton, _, _ = createWindowExW.Call(
-		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(redeemSettingsText)),
-		wsChild|wsVisible|bsPushButton,
-		642, 270, 165, 34,
-		hwnd, buttonRedeemSettings, instance, 0,
-	)
-	settingsText := utf16Ptr("设置")
-	settingsButton, _, _ = createWindowExW.Call(
-		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(settingsText)),
-		wsChild|wsVisible|bsPushButton,
-		24, 270, 150, 34,
-		hwnd, buttonSettings, instance, 0,
-	)
-	logsText := utf16Ptr("日志")
-	logsButton, _, _ = createWindowExW.Call(
-		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(logsText)),
-		wsChild|wsVisible|bsPushButton,
-		186, 270, 150, 34,
-		hwnd, buttonLogs, instance, 0,
-	)
-	logoutText := utf16Ptr("退出账号")
-	logoutButton, _, _ = createWindowExW.Call(
-		0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(logoutText)),
-		wsChild|wsVisible|bsPushButton,
-		348, 270, 150, 34,
-		hwnd, buttonLogout, instance, 0,
-	)
+	createControl("BUTTON", "快捷操作", wsChild|wsVisible|bsGroupBox, 24, 284, 840, 150, hwnd, 0, instance)
+
+	loginButton = createControl("BUTTON", "账号登录", wsChild|wsVisible|wsTabStop|bsPushButton, 46, 314, 174, 38, hwnd, buttonLogin, instance)
+	bindButton = createControl("BUTTON", "设备绑定", wsChild|wsVisible|wsTabStop|bsPushButton, 232, 314, 154, 38, hwnd, buttonBind, instance)
+	aiButton = createControl("BUTTON", "执行 AI 任务", wsChild|wsVisible|wsTabStop|bsPushButton, 398, 314, 164, 38, hwnd, buttonAI, instance)
+	pointsButton = createControl("BUTTON", "刷新积分", wsChild|wsVisible|wsTabStop|bsPushButton, 574, 314, 134, 38, hwnd, buttonPoints, instance)
+	redeemButton = createControl("BUTTON", "检查兑换", wsChild|wsVisible|wsTabStop|bsPushButton, 720, 314, 122, 38, hwnd, buttonRedeem, instance)
+
+	settingsButton = createControl("BUTTON", "设置", wsChild|wsVisible|wsTabStop|bsPushButton, 46, 370, 122, 36, hwnd, buttonSettings, instance)
+	logsButton = createControl("BUTTON", "日志", wsChild|wsVisible|wsTabStop|bsPushButton, 180, 370, 122, 36, hwnd, buttonLogs, instance)
+	logoutButton = createControl("BUTTON", "退出账号", wsChild|wsVisible|wsTabStop|bsPushButton, 314, 370, 136, 36, hwnd, buttonLogout, instance)
+	redeemSettingsButton = createControl("BUTTON", "兑换设置", wsChild|wsVisible|wsTabStop|bsPushButton, 720, 370, 122, 36, hwnd, buttonRedeemSettings, instance)
+}
+
+func applySystemFont(hwnd uintptr) {
+	if hwnd == 0 {
+		return
+	}
+	font, _, _ := getStockObject.Call(defaultGUIFont)
+	if font != 0 {
+		// 仅在当前 UI 线程给本进程控件设置系统 GUI 字体，不涉及跨进程消息。
+		sendMessageW.Call(hwnd, wmSetFont, font, 1)
+	}
+}
+
+func createAppIconControl(parent, instance, icon, x, y, width, height uintptr) uintptr {
+	control := createControl("STATIC", "", wsChild|wsVisible|ssIcon, x, y, width, height, parent, 0, instance)
+	if control != 0 && icon != 0 {
+		sendMessageW.Call(control, stmSetIcon, icon, 0)
+	}
+	return control
 }
 
 func updateStatusText(state app.State) {
@@ -445,6 +428,11 @@ func updateStatusText(state app.State) {
 	}
 	jobsRunning := state.AITask.Running || state.PointsTask.Running || state.RedeemTask.Running
 	if loginButton != 0 {
+		if state.Account == "" {
+			setControlText(loginButton, "账号登录")
+		} else {
+			setControlText(loginButton, "更换账号")
+		}
 		enabled := uintptr(1)
 		if jobsRunning {
 			enabled = 0

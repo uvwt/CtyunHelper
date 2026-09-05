@@ -19,6 +19,7 @@ type accountStore interface {
 	SaveProfile(account string, profile auth.Profile) error
 	LoadProfile(account string) (auth.Profile, error)
 	DeleteProfile() error
+	DeleteClinkProfile() error
 }
 
 // AuthFlow 负责一个账号的登录态生命周期。它只在明确鉴权失效时清理缓存，
@@ -65,26 +66,37 @@ func (f *AuthFlow) LoadStoredLogin() (account, password string, err error) {
 	return f.store.LoadLogin()
 }
 
-func (f *AuthFlow) BeginLogin(ctx context.Context, account string) (auth.LoginChallenge, error) {
+func (f *AuthFlow) BeginLoginCaptcha(ctx context.Context, account string) (auth.LoginCaptcha, error) {
 	if account == "" {
-		return auth.LoginChallenge{}, fmt.Errorf("app: 账号不能为空")
+		return auth.LoginCaptcha{}, fmt.Errorf("app: 账号不能为空")
 	}
-	// challenge/captcha 属于候选账号的临时流程，不应提前覆盖当前 Model。
-	// 已登录用户即使刷新新账号验证码失败，旧账号与旧 Clink 会话也保持不变。
-	return f.client.BeginLogin(ctx, account)
+	// 图形验证码只在服务端明确要求后获取；普通账号密码登录不会提前请求。
+	return f.client.GetLoginCaptcha(ctx, account)
 }
 
-func (f *AuthFlow) CompleteLogin(ctx context.Context, account, password, captchaCode string, challenge auth.LoginChallenge) (auth.Profile, error) {
-	if f.guard != nil {
+func (f *AuthFlow) CompleteLogin(ctx context.Context, account, password, captchaCode, captchaKey string) (auth.Profile, error) {
+	if account == "" || password == "" {
+		return auth.Profile{}, fmt.Errorf("app: 账号和密码不能为空")
+	}
+	// 官方客户端每次真正提交登录前都会重新获取 challenge。图形验证码是可选
+	// 字段，不应和 challenge 绑定成“先取验证码再登录”的固定流程。
+	challenge, err := f.client.BeginLogin(ctx, account)
+	if err != nil {
+		f.setLoginError(err)
+		return auth.Profile{}, err
+	}
+	// 一次交互式登录流程只在最初的账号密码提交时占用一次登录额度。
+	// 服务端要求验证码后的续步仍属于同一流程，不应重复消耗每日额度。
+	if f.guard != nil && captchaCode == "" {
 		if err := f.guard.Claim(automation.ActionLogin); err != nil {
 			wrapped := fmt.Errorf("app: 登录被保守策略阻止: %w", err)
 			f.setLoginError(wrapped)
 			return auth.Profile{}, wrapped
 		}
 	}
-	profile, err := f.client.Login(ctx, account, password, captchaCode, challenge)
+	profile, err := f.client.Login(ctx, account, password, captchaCode, captchaKey, challenge)
 	if err != nil {
-		if f.guard != nil {
+		if f.guard != nil && !auth.RequiresLoginCaptcha(err) {
 			if safetyErr := f.guard.RecordFailure(); safetyErr != nil {
 				err = errors.Join(err, safetyErr)
 			}
@@ -202,6 +214,7 @@ func (f *AuthFlow) Logout() error {
 	f.client.ClearProfile()
 	cleanupErr := errors.Join(
 		f.store.DeleteProfile(),
+		f.store.DeleteClinkProfile(),
 		f.store.DeleteLogin(),
 		f.store.SaveAccount(""),
 	)

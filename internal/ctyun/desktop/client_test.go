@@ -2,6 +2,8 @@ package desktop
 
 import (
 	"context"
+	"crypto/md5" //nolint:gosec // test vector for CtYun legacy protocol signature
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -130,6 +132,116 @@ func TestDesktopDiscoveryAndConnectUseHostBoundServerNode(t *testing.T) {
 	}
 	if got := regionServerDataCalls.Load(); got != 1 {
 		t.Fatalf("region getServData calls = %d, want 1", got)
+	}
+}
+
+func TestResolveClinkConnectionUsesLegacyKeepaliveRouteRequest(t *testing.T) {
+	profile := auth.Profile{UserID: 123, TenantID: 456, SecretKey: "secret-xyz"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != connectPath {
+			http.NotFound(w, r)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		form, err := url.ParseQuery(string(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if form.Get("objId") != "7" || form.Get("objType") != "0" || form.Get("osType") != "15" {
+			t.Fatalf("desktop params = %v", form)
+		}
+		if form.Get("deviceId") != "60" || form.Get("deviceType") != "60" || form.Get("clientVersion") != "103020001" {
+			t.Fatalf("legacy identity params = %v", form)
+		}
+		if form.Get("vdCommand") != "" || form.Get("hardwareFeatureCode") != "" {
+			t.Fatalf("unexpected modern params = %v", form)
+		}
+		if form.Get("deviceCode") != "device-code" || form.Get("deviceName") != "Chrome浏览器" || form.Get("appVersion") != "3.2.0" {
+			t.Fatalf("legacy device params = %v", form)
+		}
+
+		timestamp := r.Header.Get("ctg-timestamp")
+		if timestamp == "" || r.Header.Get("ctg-requestid") != timestamp {
+			t.Fatalf("legacy timestamp/request id missing")
+		}
+		source := "60" + timestamp + "456" + timestamp + "123" + "103020001" + profile.SecretKey
+		digest := md5.Sum([]byte(source))
+		if got, want := r.Header.Get("ctg-signaturestr"), hex.EncodeToString(digest[:]); got != want {
+			t.Fatalf("legacy signature = %q, want %q", got, want)
+		}
+		if r.Header.Get("ctg-devicetype") != "60" || r.Header.Get("ctg-version") != "103020001" || r.Header.Get("Referer") != "https://pc.ctyun.cn/" {
+			t.Fatalf("legacy headers missing")
+		}
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"code": 0,
+			"data": map[string]any{"desktopInfo": map[string]any{
+				"desktopId": 7, "host": "desktop.internal", "port": "7033",
+				"clinkLvsOutHost": "sh9b2-1-deskclink.ctyun.cn:9011",
+				"caCert":          "ca", "clientCert": "cert", "clientKey": "key",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	authClient := auth.NewClient(auth.DeviceIdentity{Code: "device-code"}, auth.ClientOptions{
+		APIOrigin: server.URL, HTTPClient: server.Client(),
+	})
+	authClient.UseProfile(profile)
+	client := NewClient(authClient, ClientOptions{MasterOrigin: server.URL})
+	connection, err := client.ResolveClinkConnection(context.Background(), Desktop{DesktopID: "7"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if connection.DesktopID != 7 || connection.ClinkLVSOutHost != "sh9b2-1-deskclink.ctyun.cn:9011" {
+		t.Fatalf("connection = %#v", connection)
+	}
+}
+
+func TestListForKeepaliveUsesLegacyDesktopListRequest(t *testing.T) {
+	profile := auth.Profile{UserID: 123, TenantID: 456, SecretKey: "secret-xyz"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != pageDesktopPath {
+			http.NotFound(w, r)
+			return
+		}
+		var body struct {
+			Count        int      `json:"getCnt"`
+			DesktopTypes []string `json:"desktopTypes"`
+			SortType     string   `json:"sortType"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Count != 20 || body.SortType != "createTimeV1" || strings.Join(body.DesktopTypes, ",") != "1,2001,2002,2003" {
+			t.Fatalf("legacy page request = %#v", body)
+		}
+		timestamp := r.Header.Get("ctg-timestamp")
+		source := "60" + timestamp + "456" + timestamp + "123" + "103020001" + profile.SecretKey
+		digest := md5.Sum([]byte(source))
+		if timestamp == "" || r.Header.Get("ctg-signaturestr") != hex.EncodeToString(digest[:]) {
+			t.Fatalf("legacy page signature invalid")
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"code": 0,
+			"data": map[string]any{"desktopList": []map[string]any{{
+				"desktopId": "7", "desktopName": "测试云电脑", "useStatus": "25",
+			}}},
+		})
+	}))
+	defer server.Close()
+
+	authClient := auth.NewClient(auth.DeviceIdentity{Code: "device-code"}, auth.ClientOptions{
+		APIOrigin: server.URL, HTTPClient: server.Client(),
+	})
+	authClient.UseProfile(profile)
+	client := NewClient(authClient, ClientOptions{MasterOrigin: server.URL})
+	items, err := client.ListForKeepalive(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ID() != "7" || !items[0].Running() {
+		t.Fatalf("items = %#v", items)
 	}
 }
 

@@ -42,6 +42,8 @@ func NewWorker(config WorkerConfig, notify func(Snapshot)) *Worker {
 		dialer: &websocket.Dialer{
 			HandshakeTimeout: 15 * time.Second,
 			Subprotocols:     []string{"binary"},
+			Proxy:            clinkProxy,
+			TLSClientConfig:  newClinkTLSConfig(config.Connection.ClinkLVSOutHost),
 		},
 	}
 }

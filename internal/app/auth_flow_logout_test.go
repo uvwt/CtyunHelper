@@ -10,7 +10,7 @@ import (
 func TestAuthFlowLogoutClearsPersistedAccountAndVisibleAccountState(t *testing.T) {
 	profile := auth.Profile{UserID: 123, SecretKey: "test", CommonLoginReqHeader: "common", BondedDevice: true}
 	store := &memoryAccountStore{
-		account: "account", password: "password", profile: profile, profileExists: true,
+		account: "account", password: "password", profile: profile, profileExists: true, clinkProfileExists: true,
 	}
 	client := auth.NewClient(auth.DeviceIdentity{Code: "ctyun_fixed"}, auth.ClientOptions{})
 	client.UseProfile(profile)
@@ -26,8 +26,11 @@ func TestAuthFlowLogoutClearsPersistedAccountAndVisibleAccountState(t *testing.T
 	if _, ok := client.Profile(); ok {
 		t.Fatal("client profile remained after logout")
 	}
-	if store.account != "" || store.password != "" || store.profileExists {
-		t.Fatalf("persisted login remained: account=%q password=%q profile=%v", store.account, store.password, store.profileExists)
+	if store.account != "" || store.password != "" || store.profileExists || store.clinkProfileExists {
+		t.Fatalf("persisted login remained: account=%q password=%q profile=%v clinkProfile=%v", store.account, store.password, store.profileExists, store.clinkProfileExists)
+	}
+	if store.deleteClinkProfile != 1 {
+		t.Fatalf("Clink profile delete count = %d, want 1", store.deleteClinkProfile)
 	}
 	state := model.Snapshot()
 	if state.Account != "" || state.Connection != ConnectionAuth || state.DesktopID != "" || state.DesktopName != "" || !state.OnlineSince.IsZero() || state.Points != 0 || state.UsageTask.Found {

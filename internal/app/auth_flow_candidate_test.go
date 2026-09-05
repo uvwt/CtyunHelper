@@ -13,11 +13,14 @@ import (
 
 func TestFailedCandidateLoginPreservesCurrentProfileAndModel(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/auth/client/login" {
+		switch r.URL.Path {
+		case "/api/auth/client/genChallengeData":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"challengeId": "challenge", "challengeCode": "salt"}})
+		case "/api/auth/client/login":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 51010, "msg": "password invalid"})
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"code": 51010, "msg": "password invalid"})
 	}))
 	defer server.Close()
 
@@ -32,8 +35,7 @@ func TestFailedCandidateLoginPreservesCurrentProfileAndModel(t *testing.T) {
 	model := NewModel(State{Account: "old-account", Connection: ConnectionOnline})
 	flow := NewAuthFlow(client, &memoryAccountStore{}, model, nil)
 
-	challenge := auth.LoginChallenge{ID: "challenge", Code: "salt", CaptchaKey: "captcha-key"}
-	if _, err := flow.CompleteLogin(context.Background(), "new-account", "wrong-password", "1234", challenge); err == nil {
+	if _, err := flow.CompleteLogin(context.Background(), "new-account", "wrong-password", "1234", "captcha-key"); err == nil {
 		t.Fatal("expected candidate login failure")
 	}
 	profile, ok := client.Profile()

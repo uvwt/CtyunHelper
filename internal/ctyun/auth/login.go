@@ -13,13 +13,16 @@ import (
 )
 
 type LoginChallenge struct {
-	ID         string
-	Code       string
-	CaptchaKey string
-	Captcha    []byte
+	ID   string
+	Code string
 }
 
-func (c *Client) BeginLogin(ctx context.Context, account string) (LoginChallenge, error) {
+type LoginCaptcha struct {
+	Key   string
+	Image []byte
+}
+
+func (c *Client) BeginLogin(ctx context.Context, _ string) (LoginChallenge, error) {
 	requestContext, headers, err := c.BaseHeaders()
 	_ = requestContext
 	if err != nil {
@@ -53,20 +56,14 @@ func (c *Client) BeginLogin(ctx context.Context, account string) (LoginChallenge
 		return LoginChallenge{}, fmt.Errorf("auth: challenge 响应缺少必要字段")
 	}
 
-	captcha, captchaKey, err := c.downloadLoginCaptcha(ctx, account)
-	if err != nil {
-		return LoginChallenge{}, err
-	}
 	return LoginChallenge{
-		ID:         envelope.Data.ChallengeID,
-		Code:       envelope.Data.ChallengeCode,
-		CaptchaKey: captchaKey,
-		Captcha:    captcha,
+		ID:   envelope.Data.ChallengeID,
+		Code: envelope.Data.ChallengeCode,
 	}, nil
 }
 
-func (c *Client) Login(ctx context.Context, account, password, captchaCode string, challenge LoginChallenge) (Profile, error) {
-	if challenge.ID == "" || challenge.Code == "" || captchaCode == "" {
+func (c *Client) Login(ctx context.Context, account, password, captchaCode, captchaKey string, challenge LoginChallenge) (Profile, error) {
+	if challenge.ID == "" || challenge.Code == "" {
 		return Profile{}, fmt.Errorf("auth: 登录参数不完整")
 	}
 	_, headers, err := c.BaseHeaders()
@@ -84,10 +81,12 @@ func (c *Client) Login(ctx context.Context, account, password, captchaCode strin
 		"userAccount":   {account},
 		"password":      {LoginPassword(password, challenge.Code)},
 		"challengeId":   {challenge.ID},
-		"captchaCode":   {captchaCode},
 	}
-	if challenge.CaptchaKey != "" {
-		form.Set("captchaCodeKey", challenge.CaptchaKey)
+	if captchaCode != "" {
+		form.Set("captchaCode", captchaCode)
+		if captchaKey != "" {
+			form.Set("captchaCodeKey", captchaKey)
+		}
 	}
 	headers.Set("Content-Type", "application/x-www-form-urlencoded")
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiOrigin+"/api/auth/client/login", bytes.NewBufferString(form.Encode()))
@@ -117,6 +116,14 @@ func (c *Client) Login(ctx context.Context, account, password, captchaCode strin
 	// 这里只验证服务端登录并返回候选 Profile。真正切换当前账号由 App
 	// 在凭据、Profile 缓存和安全状态都成功持久化后统一提交，避免半切换。
 	return profile, nil
+}
+
+func (c *Client) GetLoginCaptcha(ctx context.Context, account string) (LoginCaptcha, error) {
+	image, key, err := c.downloadLoginCaptcha(ctx, account)
+	if err != nil {
+		return LoginCaptcha{}, err
+	}
+	return LoginCaptcha{Key: key, Image: image}, nil
 }
 
 func (c *Client) downloadLoginCaptcha(ctx context.Context, account string) ([]byte, string, error) {

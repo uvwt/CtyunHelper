@@ -53,14 +53,14 @@ func buildRuntime() (*app.Runtime, error) {
 		Type: config.Device.Type, CreatedAt: config.Device.CreatedAt,
 	}
 	authClient := auth.NewClient(device, auth.ClientOptions{})
+	clinkAuthClient := auth.NewClient(device, auth.ClientOptions{})
 	model := app.NewModel(app.State{
 		Account:          config.Account,
 		Connection:       app.ConnectionAuth,
 		AutomationPaused: !config.Automation.Enabled,
 	})
 	accountStore := storage.NewAccountStore(paths)
-	desktopClient := desktop.NewClient(authClient, desktop.ClientOptions{})
-	keepalive := app.NewKeepalive(authClient, desktopClient, model)
+	desktopClient := desktop.NewClient(clinkAuthClient, desktop.ClientOptions{})
 	pointsClient := points.NewClient(authClient, points.ClientOptions{})
 	eaiClient, err := eai.NewClient(authClient, eai.ClientOptions{})
 	if err != nil {
@@ -86,6 +86,7 @@ func buildRuntime() (*app.Runtime, error) {
 			return storage.SaveStateJSON(paths, "safety.json", state)
 		},
 	})
+	keepalive := app.NewKeepalive(authClient, clinkAuthClient, desktopClient, accountStore, guard, model)
 	authFlow := app.NewAuthFlow(authClient, accountStore, model, guard)
 	aiJob := automation.NewAIJob(pointsClient, eaiClient, guard, "你好")
 	pointsJob := automation.NewPointsJob(pointsClient, automation.PointsJobOptions{})

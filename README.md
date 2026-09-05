@@ -113,4 +113,10 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
   go build -ldflags="-H=windowsgui" -o bin/CtyunHelper.exe ./cmd/ctyun-helper
 ```
 
-最终 Portable 交付物只保留 `CtyunHelper.exe`；用户配置、凭据和运行状态仍按 Windows 规范存入用户配置目录、Credential Manager 和 DPAPI 保护的数据文件。
+上面的交叉编译可用于协议和 Windows 编译检查。正式 Windows 交付物还应在 Windows 上把同一枚应用图标写入 PE 资源，使 Explorer 文件图标与窗口/托盘一致：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\embed-icon-windows.ps1 -Executable .\bin\CtyunHelper.exe
+```
+
+该步骤只修改 `CtyunHelper.exe` 自身的 `RT_ICON/RT_GROUP_ICON`，不会引入额外 DLL 或运行时文件。最终 Portable 交付物仍只保留 `CtyunHelper.exe`；用户配置、凭据和运行状态仍按 Windows 规范存入用户配置目录、Credential Manager 和 DPAPI 保护的数据文件。

@@ -560,8 +560,7 @@ func updateStatusText(state app.State) {
 	setHomeStatusValue(homeStatus.desktop, desktopName, desktopColor)
 	setHomeStatusValue(homeStatus.points, fmt.Sprintf("%d", state.Points), statusColorInfo)
 
-	pointsSync, pointsSyncColor := jobStatusText(state.PointsTask, "刷新中", false)
-	setHomeStatusState(homeStatus.pointsSync, pointsSync, pointsSyncColor)
+	setHomeStatusPlain(homeStatus.pointsSync, pointsSyncText(state.PointsTask))
 
 	redeemStatus, redeemColor := redeemHomeStatusText(state)
 	setHomeStatusState(homeStatus.redeem, redeemStatus, redeemColor)
@@ -585,12 +584,10 @@ func updateStatusText(state app.State) {
 	setHomeStatusValue(homeStatus.redeemProduct, configuredProduct, configuredProductColor)
 
 	lastError := state.LastError
-	lastErrorColor := statusColorError
 	if lastError == "" {
 		lastError = "无"
-		lastErrorColor = statusColorSuccess
 	}
-	setHomeStatusState(homeStatus.lastError, lastError, lastErrorColor)
+	setHomeStatusPlain(homeStatus.lastError, lastError)
 
 	loginAI, loginAIColor := pointsTaskStatusText(state.LoginAITask)
 	setHomeStatusState(homeStatus.loginAITask, loginAI, loginAIColor)
@@ -602,6 +599,14 @@ func updateStatusText(state app.State) {
 
 func setHomeStatusState(control uintptr, text string, color uint32) {
 	setHomeStatusValue(control, homeStatusIndicatorText(text), color)
+}
+
+func setHomeStatusPlain(control uintptr, text string) {
+	if control == 0 {
+		return
+	}
+	delete(homeStatusColors, control)
+	setControlText(control, text)
 }
 
 func homeStatusIndicatorText(text string) string {
@@ -652,20 +657,14 @@ func pointsTaskStatusText(status app.PointsTaskStatus) (string, uint32) {
 	return "待完成", statusColorWarning
 }
 
-func jobStatusText(status app.JobStatus, runningText string, paused bool) (string, uint32) {
-	if paused {
-		return "已暂停", statusColorWarning
-	}
+func pointsSyncText(status app.JobStatus) string {
 	if status.Running {
-		return runningText, statusColorWarning
-	}
-	if status.LastError != "" {
-		return "异常：" + status.LastError, statusColorError
+		return "同步中…"
 	}
 	if !status.LastRun.IsZero() {
-		return "已完成（" + status.LastRun.Format("01-02 15:04") + "）", statusColorSuccess
+		return status.LastRun.Format("01-02 15:04")
 	}
-	return "等待首次执行", statusColorMuted
+	return "尚未同步"
 }
 
 func redeemHomeStatusText(state app.State) (string, uint32) {

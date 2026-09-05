@@ -9,27 +9,20 @@ import (
 	"github.com/uvwt/CtyunHelper/internal/app"
 )
 
-func TestJobStatusTextShowsCompletedAfterSuccessfulRun(t *testing.T) {
+func TestPointsSyncTextShowsOnlyLastSyncTime(t *testing.T) {
 	lastRun := time.Date(2026, 9, 5, 16, 30, 0, 0, time.Local)
-	text, color := jobStatusText(app.JobStatus{LastRun: lastRun}, "运行中", false)
-	if text != "已完成（09-05 16:30）" {
+	text := pointsSyncText(app.JobStatus{LastRun: lastRun})
+	if text != "09-05 16:30" {
 		t.Fatalf("text = %q", text)
-	}
-	if color != statusColorSuccess {
-		t.Fatalf("color = %#x", color)
 	}
 }
 
-func TestJobStatusTextKeepsErrorAheadOfLastRun(t *testing.T) {
-	text, color := jobStatusText(app.JobStatus{
-		LastRun:   time.Date(2026, 9, 5, 16, 30, 0, 0, time.Local),
-		LastError: "请求失败",
-	}, "运行中", false)
-	if text != "异常：请求失败" {
-		t.Fatalf("text = %q", text)
+func TestPointsSyncTextShowsRunningAndInitialState(t *testing.T) {
+	if got := pointsSyncText(app.JobStatus{Running: true}); got != "同步中…" {
+		t.Fatalf("running = %q", got)
 	}
-	if color != statusColorError {
-		t.Fatalf("color = %#x", color)
+	if got := pointsSyncText(app.JobStatus{}); got != "尚未同步" {
+		t.Fatalf("initial = %q", got)
 	}
 }
 

@@ -49,7 +49,7 @@ func openAboutWindow(owner uintptr) {
 		uintptr(unsafe.Pointer(utf16Ptr("CtyunHelperAboutWindow"))),
 		uintptr(unsafe.Pointer(utf16Ptr("关于 CtyunHelper"))),
 		wsOverlappedWindow,
-		cwUseDefault, cwUseDefault, 640, 390,
+		cwUseDefault, cwUseDefault, 640, 320,
 		owner, 0, instance, 0,
 	)
 	if hwnd == 0 {
@@ -73,16 +73,14 @@ func openAboutWindow(owner uintptr) {
 	createLabel(hwnd, instance, "版本："+buildinfo.Version, 34, 112, 520, 26)
 	createLabel(hwnd, instance, "作者："+buildinfo.Author, 34, 146, 520, 26)
 	createLabel(hwnd, instance, "GitHub："+buildinfo.RepositoryURL, 34, 180, 560, 26)
-	createLabel(hwnd, instance, "项目定位：单进程、单个 EXE，不依赖 Docker / Python / Chromium / .NET。", 34, 220, 560, 26)
-	createLabel(hwnd, instance, "说明：本项目为非官方辅助工具，与中国电信 / 天翼云电脑无隶属关系。", 34, 252, 560, 26)
 
 	createControl(
 		"BUTTON", "打开 GitHub", wsChild|wsVisible|wsTabStop|bsPushButton,
-		146, 302, 150, 38, hwnd, aboutOpenRepository, instance,
+		146, 230, 150, 38, hwnd, aboutOpenRepository, instance,
 	)
 	createControl(
 		"BUTTON", "关闭", wsChild|wsVisible|wsTabStop|bsPushButton,
-		330, 302, 130, 38, hwnd, aboutClose, instance,
+		330, 230, 130, 38, hwnd, aboutClose, instance,
 	)
 
 	showWindow.Call(hwnd, swShow)

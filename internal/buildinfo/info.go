@@ -7,7 +7,6 @@ const (
 	RepositoryURL = "https://github.com/uvwt/CtyunHelper"
 )
 
-// Version 是唯一的应用版本来源。开发构建使用默认值；正式发布时可通过：
-// -ldflags "-X github.com/uvwt/CtyunHelper/internal/buildinfo.Version=0.1.0"
-// 注入对应版本，而无需修改 UI 代码。
-var Version = "0.1.0-dev"
+// Version 是唯一的应用版本来源。正式发布可继续通过 -ldflags -X 覆盖，
+// 便于后续版本构建时保持 UI 与发布元数据一致。
+var Version = "0.1.0"

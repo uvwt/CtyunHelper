@@ -68,7 +68,7 @@ func openAboutWindow(owner uintptr) {
 	}
 	createAppIconControl(hwnd, instance, icon, 34, 34, 56, 56)
 	createLabel(hwnd, instance, buildinfo.AppName, 112, 34, 450, 28)
-	createLabel(hwnd, instance, buildinfo.DisplayName+" · Windows 原生纯 Go 客户端", 112, 66, 450, 26)
+	createLabel(hwnd, instance, buildinfo.DisplayName, 112, 66, 450, 26)
 
 	createLabel(hwnd, instance, "版本："+buildinfo.Version, 34, 112, 520, 26)
 	createLabel(hwnd, instance, "作者："+buildinfo.Author, 34, 146, 520, 26)

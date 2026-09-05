@@ -9,12 +9,22 @@ import (
 	"encoding/pem"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 var gatewayAESKey = []byte("chinatelecom@cnn")
 
 func decryptAESECBBase64(value string, key []byte) ([]byte, error) {
-	raw, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(strings.ReplaceAll(value, "\r", ""), "\n", ""))
+	// EAI 偶尔会在 Base64 密文中插入空格或其他空白字符；这类空白只是
+	// 传输格式，不属于密文本身。统一剔除 Unicode 空白后再做标准 Base64
+	// 解码，AES/PKCS7 校验仍保持严格，不放宽任何密码学验证。
+	cleaned := strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, value)
+	raw, err := base64.StdEncoding.DecodeString(cleaned)
 	if err != nil {
 		return nil, fmt.Errorf("eai: base64 解码失败: %w", err)
 	}

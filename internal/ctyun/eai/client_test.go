@@ -75,6 +75,7 @@ func TestEAIEndToEndProtocolFlow(t *testing.T) {
 			if len(clientKey) != 16 {
 				t.Fatalf("clientKey len = %d", len(clientKey))
 			}
+			http.SetCookie(w, &http.Cookie{Name: "eai-session", Value: "ok", Path: "/"})
 			json.NewEncoder(w).Encode(map[string]any{
 				"resultCode": "0",
 				"data": map[string]any{
@@ -82,6 +83,10 @@ func TestEAIEndToEndProtocolFlow(t *testing.T) {
 				},
 			})
 		case "/ai/portal/wenc/v2/user/queryUserTenantInfo":
+			cookie, err := r.Cookie("eai-session")
+			if err != nil || cookie.Value != "ok" {
+				t.Fatalf("SSO cookie missing: cookie=%v err=%v", cookie, err)
+			}
 			assertWebSignature(t, r, sessionKey, nil)
 			json.NewEncoder(w).Encode(map[string]any{
 				"resultCode": "0",

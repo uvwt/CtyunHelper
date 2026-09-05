@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"sort"
 	"strconv"
@@ -140,7 +141,21 @@ func NewClient(tickets TicketProvider, options ClientOptions) (*Client, error) {
 	}
 	httpClient := options.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 150 * time.Second}
+		jar, err := cookiejar.New(nil)
+		if err != nil {
+			return nil, fmt.Errorf("eai: 初始化 CookieJar: %w", err)
+		}
+		httpClient = &http.Client{Timeout: 150 * time.Second, Jar: jar}
+	} else if httpClient.Jar == nil {
+		// EAI SSO 会在 ticketAuthorize 返回 Cookie，后续 wenc 接口必须沿用同一
+		// 会话。复制调用方传入的 Client 再补 Jar，避免修改外部共享 Client。
+		jar, err := cookiejar.New(nil)
+		if err != nil {
+			return nil, fmt.Errorf("eai: 初始化 CookieJar: %w", err)
+		}
+		cloned := *httpClient
+		cloned.Jar = jar
+		httpClient = &cloned
 	}
 	now := options.Now
 	if now == nil {

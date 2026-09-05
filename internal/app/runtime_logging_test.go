@@ -10,6 +10,21 @@ import (
 	"github.com/uvwt/CtyunHelper/internal/logging"
 )
 
+func TestHealthyBackoffIsLoggedAsInfo(t *testing.T) {
+	logger, err := logging.New(logging.Options{Path: filepath.Join(t.TempDir(), "app.log")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logger.Close()
+
+	runtime := NewRuntime(nil, nil, nil, nil, RuntimeOptions{Logger: logger})
+	runtime.logStateTransition(State{Connection: ConnectionOnline}, State{Connection: ConnectionBackoff})
+	entries := logger.Snapshot(10)
+	if len(entries) != 1 || entries[0].Level != logging.LevelInfo {
+		t.Fatalf("backoff log = %#v", entries)
+	}
+}
+
 func TestRuntimePublishesLogEventsAndRecordsStateTransitions(t *testing.T) {
 	logger, err := logging.New(logging.Options{Path: filepath.Join(t.TempDir(), "app.log"), MemoryEntries: 50})
 	if err != nil {

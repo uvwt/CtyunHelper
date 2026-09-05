@@ -50,6 +50,24 @@ func TestPointsClientUsesNativePublicHeadersAndMergesDesktops(t *testing.T) {
 	}
 }
 
+func TestDesktopAcceptsStringAndNumericIDs(t *testing.T) {
+	var fromStrings Desktop
+	if err := json.Unmarshal([]byte(`{"desktopId":"23692327","desktopName":"主云电脑","objId":"23692327"}`), &fromStrings); err != nil {
+		t.Fatal(err)
+	}
+	if fromStrings.DesktopID != 23692327 || fromStrings.ObjectID != 23692327 || fromStrings.ID() != 23692327 {
+		t.Fatalf("string ids = %#v", fromStrings)
+	}
+
+	var fromNumbers Desktop
+	if err := json.Unmarshal([]byte(`{"desktopId":42,"objId":43,"objName":"备用云电脑"}`), &fromNumbers); err != nil {
+		t.Fatal(err)
+	}
+	if fromNumbers.DesktopID != 42 || fromNumbers.ObjectID != 43 || fromNumbers.Name() != "备用云电脑" {
+		t.Fatalf("numeric ids = %#v", fromNumbers)
+	}
+}
+
 func TestGeneralPointsUsesPointsFieldFromRealResponseShape(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": []map[string]any{

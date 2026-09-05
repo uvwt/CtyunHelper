@@ -36,9 +36,11 @@ func (r *Runtime) logStateTransition(previous, current State) {
 	if previous.Connection != current.Connection {
 		fields := []logging.Field{logging.String("state", string(current.Connection))}
 		switch current.Connection {
-		case ConnectionBackoff, ConnectionAuth, ConnectionDeviceBind, ConnectionError:
+		case ConnectionAuth, ConnectionDeviceBind, ConnectionError:
 			r.logger.Warn("connection", "连接状态变化", fields...)
 		default:
+			// Clink 每个健康周期都会主动进入 backoff 等待下一次约 60 秒重连，
+			// 这是正常生命周期而不是告警；真正的连接错误会通过 LastError 单独记录。
 			r.logger.Info("connection", "连接状态变化", fields...)
 		}
 	}

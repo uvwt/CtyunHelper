@@ -51,6 +51,50 @@ type Desktop struct {
 	ObjectName  string `json:"objName"`
 }
 
+func (d *Desktop) UnmarshalJSON(raw []byte) error {
+	var payload struct {
+		DesktopID   json.RawMessage `json:"desktopId"`
+		DesktopName string          `json:"desktopName"`
+		ObjectID    json.RawMessage `json:"objId"`
+		ObjectName  string          `json:"objName"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return err
+	}
+	desktopID, err := decodeInt64(payload.DesktopID)
+	if err != nil {
+		return fmt.Errorf("points: desktopId 无效: %w", err)
+	}
+	objectID, err := decodeInt64(payload.ObjectID)
+	if err != nil {
+		return fmt.Errorf("points: objId 无效: %w", err)
+	}
+	d.DesktopID = desktopID
+	d.DesktopName = payload.DesktopName
+	d.ObjectID = objectID
+	d.ObjectName = payload.ObjectName
+	return nil
+}
+
+func decodeInt64(raw json.RawMessage) (int64, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return 0, nil
+	}
+	if raw[0] == '"' {
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return 0, err
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return 0, nil
+		}
+		return strconv.ParseInt(value, 10, 64)
+	}
+	return strconv.ParseInt(string(raw), 10, 64)
+}
+
 func (d Desktop) ID() int64 {
 	if d.DesktopID != 0 {
 		return d.DesktopID

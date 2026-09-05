@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/uvwt/CtyunHelper/internal/automation"
 	"github.com/uvwt/CtyunHelper/internal/ctyun/auth"
+	"github.com/uvwt/CtyunHelper/internal/ctyun/points"
 )
 
 type blockingSession struct {
@@ -87,6 +89,56 @@ func TestRuntimeDoesNotStartUnboundSession(t *testing.T) {
 		t.Fatalf("unbound session starts = %d", got)
 	}
 	runtime.Stop()
+}
+
+func TestRuntimeRefreshesPointsAfterFirstLogin(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/auth/client/genChallengeData":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"challengeId": "challenge", "challengeCode": "salt"}})
+		case "/api/auth/client/login":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"data": map[string]any{
+					"userId": 2, "userEid": "eid", "tenantId": 3,
+					"secretKey": "key", "commonLoginReqHeader": "common", "bondedDevice": true,
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	model := NewModel(State{Connection: ConnectionAuth})
+	pointsClient := &appPointsRedeemClient{
+		tasks: []points.Task{{Name: automation.UsageTaskName, Status: automation.TaskDone, CurrentProgress: 60}},
+		value: 650,
+	}
+	tasks, _ := newAppAutomationForPoints(t, model, pointsClient, false)
+	authClient := auth.NewClient(auth.DeviceIdentity{Code: "device"}, auth.ClientOptions{APIOrigin: server.URL, HTTPClient: server.Client()})
+	flow := NewAuthFlow(authClient, &memoryAccountStore{}, model, nil)
+	runtime := NewRuntime(model, flow, nil, tasks, RuntimeOptions{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runtime.Start(ctx)
+	defer runtime.Stop()
+
+	deadline := time.Now().Add(time.Second)
+	for model.Snapshot().PointsTask.LastRun.IsZero() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := runtime.CompleteLogin(context.Background(), "account", "password", "1234", "captcha-key"); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for model.Snapshot().Points != 650 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	state := model.Snapshot()
+	if state.Points != 650 || !state.UsageTask.Found {
+		t.Fatalf("points were not refreshed after login: %#v", state)
+	}
 }
 
 func TestRuntimeSwitchAccountStopsOldSessionBeforeStartingNewOne(t *testing.T) {

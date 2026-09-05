@@ -146,6 +146,13 @@ func (r *Runtime) RunPointsTask() error {
 	return r.automation.RunPoints(ctx)
 }
 
+func (r *Runtime) refreshPointsAsync() {
+	if r == nil || r.automation == nil {
+		return
+	}
+	go func() { _ = r.RunPointsTask() }()
+}
+
 func (r *Runtime) RunRedeemTask() error {
 	if r.automation == nil {
 		return fmt.Errorf("app: 兑换任务未初始化")
@@ -312,6 +319,7 @@ func (r *Runtime) CompleteLogin(ctx context.Context, account, password, captchaC
 	}
 	if profile.BondedDevice {
 		r.StartSession()
+		r.refreshPointsAsync()
 	}
 	return profile, nil
 }
@@ -335,6 +343,7 @@ func (r *Runtime) CompleteDeviceBinding(ctx context.Context, smsCode, smsKey str
 		return err
 	}
 	r.StartSession()
+	r.refreshPointsAsync()
 	return nil
 }
 

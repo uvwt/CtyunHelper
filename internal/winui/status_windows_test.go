@@ -64,3 +64,19 @@ func TestHomeStatusIndicatorTextUsesSolidDot(t *testing.T) {
 		t.Fatalf("indicator = %q", got)
 	}
 }
+
+func TestRedeemNextRunText(t *testing.T) {
+	nextRun := time.Date(2026, 9, 7, 4, 5, 0, 0, time.Local)
+	if got := redeemNextRunText(app.State{RedeemEnabled: true, RedeemTask: app.JobStatus{NextRun: nextRun}}); got != "09-07 04:05" {
+		t.Fatalf("next run = %q", got)
+	}
+	if got := redeemNextRunText(app.State{}); got != "未启用" {
+		t.Fatalf("disabled = %q", got)
+	}
+	if got := redeemNextRunText(app.State{RedeemEnabled: true}); got != "计算中" {
+		t.Fatalf("pending schedule = %q", got)
+	}
+	if got := redeemNextRunText(app.State{RedeemSummary: "上次兑换结果不确定，已停止自动兑换"}); got != "待确认上一笔" {
+		t.Fatalf("pending redeem = %q", got)
+	}
+}

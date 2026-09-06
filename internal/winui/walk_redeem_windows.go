@@ -177,52 +177,67 @@ func (v *walkMainView) openRedeemSettings() {
 			walk.MsgBox(dlg, "确认兑换结果", err.Error(), walk.MsgBoxIconError|walk.MsgBoxOK)
 			return
 		}
-		pendingGroup.SetVisible(false)
+		if pendingGroup != nil {
+			pendingGroup.SetVisible(false)
+		}
 		settings.Pending = false
 		_ = statusLabel.SetText("上一笔兑换结果已确认。")
 	}
 
-	if err := (d.Dialog{
-		AssignTo: &dlg,
-		Title:    "兑换设置",
-		Size:     d.Size{Width: 590, Height: 590},
-		MinSize:  d.Size{Width: 520, Height: 470},
-		Layout:   d.VBox{Margins: d.Margins{Left: 12, Top: 12, Right: 12, Bottom: 12}, Spacing: 8},
-		Children: []d.Widget{
-			d.CheckBox{AssignTo: &enabledCheck, Text: "启用自动兑换"},
-			d.GroupBox{Title: "兑换目标", Layout: d.Grid{Columns: 2, Spacing: 8}, Children: []d.Widget{
-				d.Label{Text: "云电脑", MinSize: d.Size{Width: 110}},
-				d.ComboBox{AssignTo: &desktopCombo, Model: []string{"正在加载…"}, StretchFactor: 1},
-				d.Label{Text: "兑换商品", MinSize: d.Size{Width: 110}},
-				d.ComboBox{AssignTo: &productCombo, Model: []string{"正在加载…"}, StretchFactor: 1},
-				d.Label{Text: "单次最多兑换", MinSize: d.Size{Width: 110}},
-				d.NumberEdit{AssignTo: &maxTimesEdit, MinValue: 0, MaxValue: 100, SpinButtonsVisible: true},
-			}},
-			d.GroupBox{Title: "执行策略", Layout: d.Grid{Columns: 2, Spacing: 8}, Children: []d.Widget{
-				d.Label{Text: "策略", MinSize: d.Size{Width: 110}},
-				d.ComboBox{AssignTo: &scheduleCombo, Model: []string{"每天", "每隔 N 天", "每月指定日期"}, StretchFactor: 1},
-				d.Label{Text: "间隔天数", MinSize: d.Size{Width: 110}},
-				d.NumberEdit{AssignTo: &intervalEdit, MinValue: 1, MaxValue: 365, Value: 1, SpinButtonsVisible: true},
-				d.Label{Text: "每月日期", MinSize: d.Size{Width: 110}},
-				d.LineEdit{AssignTo: &monthlyEdit, CueBanner: "例如 1,15,-1（-1 表示月末）", StretchFactor: 1},
-			}},
-			d.GroupBox{AssignTo: &pendingGroup, Title: "待确认兑换", Visible: settings.Pending, Layout: d.VBox{Spacing: 6}, Children: []d.Widget{
-				d.Label{Text: fmt.Sprintf("%s：上次兑换结果不确定（次数 %d，积分 %d）。", settings.PendingDate, settings.PendingTimes, settings.PendingPoints), EllipsisMode: d.EllipsisNone},
+	dialogChildren := []d.Widget{
+		d.CheckBox{AssignTo: &enabledCheck, Text: "启用自动兑换"},
+		d.GroupBox{Title: "兑换目标", Layout: d.Grid{Columns: 2, Spacing: 8}, Children: []d.Widget{
+			d.Label{Text: "云电脑", MinSize: d.Size{Width: 110}},
+			d.ComboBox{AssignTo: &desktopCombo, Model: []string{"正在加载…"}, StretchFactor: 1},
+			d.Label{Text: "兑换商品", MinSize: d.Size{Width: 110}},
+			d.ComboBox{AssignTo: &productCombo, Model: []string{"正在加载…"}, StretchFactor: 1},
+			d.Label{Text: "单次最多兑换", MinSize: d.Size{Width: 110}},
+			d.NumberEdit{AssignTo: &maxTimesEdit, MinValue: 0, MaxValue: 100, SpinButtonsVisible: true},
+		}},
+		d.GroupBox{Title: "执行策略", Layout: d.Grid{Columns: 2, Spacing: 8}, Children: []d.Widget{
+			d.Label{Text: "策略", MinSize: d.Size{Width: 110}},
+			d.ComboBox{AssignTo: &scheduleCombo, Model: []string{"每天", "每隔 N 天", "每月指定日期"}, StretchFactor: 1},
+			d.Label{Text: "间隔天数", MinSize: d.Size{Width: 110}},
+			d.NumberEdit{AssignTo: &intervalEdit, MinValue: 1, MaxValue: 365, SpinButtonsVisible: true},
+			d.Label{Text: "每月日期", MinSize: d.Size{Width: 110}},
+			d.LineEdit{AssignTo: &monthlyEdit, CueBanner: "例如 1,15,-1（-1 表示月末）", StretchFactor: 1},
+		}},
+	}
+	// Walk 会在 Dialog.Run 时重新显示已创建的普通子控件，所以非 pending
+	// 状态下不创建这组控件，确保它既不可见，也完全不参与布局。
+	if settings.Pending {
+		dialogChildren = append(dialogChildren, d.GroupBox{
+			AssignTo: &pendingGroup,
+			Title:    "兑换结果待确认",
+			Layout:   d.VBox{Spacing: 6},
+			Children: []d.Widget{
+				d.Label{Text: fmt.Sprintf("%s：程序无法确定上一笔兑换是否成功（%d 次，预计 %d 积分），请核对天翼云后确认结果。", settings.PendingDate, settings.PendingTimes, settings.PendingPoints), EllipsisMode: d.EllipsisNone},
 				d.Composite{Layout: d.HBox{MarginsZero: true, Spacing: 8}, Children: []d.Widget{
-					d.PushButton{Text: "确认成功", OnClicked: func() { resolvePending(true) }},
-					d.PushButton{Text: "确认失败", OnClicked: func() { resolvePending(false) }},
+					d.PushButton{Text: "确认已成功", OnClicked: func() { resolvePending(true) }},
+					d.PushButton{Text: "确认未成功", OnClicked: func() { resolvePending(false) }},
 					d.HSpacer{},
 				}},
-			}},
-			d.Label{AssignTo: &statusLabel, Text: "正在加载兑换目录…", EllipsisMode: d.EllipsisNone},
+			},
+		})
+	}
+	dialogChildren = append(dialogChildren,
+		d.Label{AssignTo: &statusLabel, Text: "正在加载兑换目录…", EllipsisMode: d.EllipsisNone},
+		d.HSpacer{},
+		d.Composite{Layout: d.HBox{MarginsZero: true, Spacing: 8}, Children: []d.Widget{
+			d.PushButton{AssignTo: &refreshButton, Text: "刷新目录", OnClicked: func() { loadCatalog() }},
 			d.HSpacer{},
-			d.Composite{Layout: d.HBox{MarginsZero: true, Spacing: 8}, Children: []d.Widget{
-				d.PushButton{AssignTo: &refreshButton, Text: "刷新目录", OnClicked: func() { loadCatalog() }},
-				d.HSpacer{},
-				d.PushButton{AssignTo: &saveButton, Text: "保存", OnClicked: save},
-				d.PushButton{AssignTo: &cancelButton, Text: "取消", OnClicked: func() { dlg.Cancel() }},
-			}},
-		},
+			d.PushButton{AssignTo: &saveButton, Text: "保存", OnClicked: save},
+			d.PushButton{AssignTo: &cancelButton, Text: "取消", OnClicked: func() { dlg.Cancel() }},
+		}},
+	)
+
+	if err := (d.Dialog{
+		AssignTo:      &dlg,
+		Title:         "兑换设置",
+		Size:          d.Size{Width: 590, Height: 590},
+		MinSize:       d.Size{Width: 520, Height: 470},
+		Layout:        d.VBox{Margins: d.Margins{Left: 12, Top: 12, Right: 12, Bottom: 12}, Spacing: 8},
+		Children:      dialogChildren,
 		DefaultButton: &saveButton,
 		CancelButton:  &cancelButton,
 	}).Create(v.window); err != nil {

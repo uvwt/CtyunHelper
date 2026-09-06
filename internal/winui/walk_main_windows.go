@@ -28,6 +28,7 @@ type walkMainView struct {
 	redeem        *walk.TextLabel
 	redeemDesktop *walk.TextLabel
 	redeemProduct *walk.TextLabel
+	redeemNext    *walk.TextLabel
 	lastError     *walk.TextLabel
 	loginAITask   *walk.TextLabel
 	usageTask     *walk.TextLabel
@@ -102,78 +103,96 @@ func Run(buildRuntime func() (*app.Runtime, error), options RunOptions) error {
 
 func (v *walkMainView) create() error {
 	caption := func(text string) d.Label {
-		return d.Label{Text: text, MinSize: d.Size{Width: 105}, MaxSize: d.Size{Width: 135}}
+		return d.Label{Text: text, MinSize: d.Size{Width: 76}, MaxSize: d.Size{Width: 92}}
 	}
 	value := func(target **walk.TextLabel) d.TextLabel {
-		// TextLabel 本身具备 GrowableHorz，并能随可用宽度换行；普通 Label
-		// 只按文字理想宽度参与布局，会让 ScrollView 内的状态卡片被居中挤到右侧。
+		// 首页状态都保持单行展示。给 TextLabel 明确的最小高度，避免高 DPI 下
+		// 字形被控件的理想高度裁掉；横向空间由 Grid / HBox 的 StretchFactor 分配。
 		return d.TextLabel{
 			AssignTo:      target,
-			MinSize:       d.Size{Width: 160},
+			MinSize:       d.Size{Width: 150, Height: 20},
 			StretchFactor: 1,
 			TextAlignment: d.AlignHNearVCenter,
 		}
 	}
-
 	if err := (d.MainWindow{
 		AssignTo: &v.window,
 		Title:    walkWindowTitle,
-		Size:     d.Size{Width: 720, Height: 480},
-		MinSize:  d.Size{Width: 620, Height: 400},
+		Size:     d.Size{Width: 820, Height: 350},
+		MinSize:  d.Size{Width: 760, Height: 330},
 		Visible:  false,
 		Layout:   d.VBox{Margins: d.Margins{Left: 12, Top: 12, Right: 12, Bottom: 12}, Spacing: 8, Alignment: d.AlignHNearVNear},
 		Children: []d.Widget{
-			d.ScrollView{
-				// Walk 只有启用水平滚动能力时才给 ScrollView GrowableHorz；
-				// 实际内容宽度由内部布局跟随客户区，因此正常不会出现水平滚动条。
-				HorizontalFixed: false,
-				Layout:          d.VBox{MarginsZero: true, Spacing: 8, Alignment: d.AlignHNearVNear},
+			d.Composite{
+				MinSize: d.Size{Height: 32},
+				Layout:  d.VBox{Margins: d.Margins{Top: 6, Bottom: 5}, SpacingZero: true},
 				Children: []d.Widget{
-					d.GroupBox{
-						Title:  "核心状态",
-						Layout: d.Grid{Columns: 2, Spacing: 8},
+					d.Label{Text: "核心状态"},
+				},
+			},
+			d.Composite{
+				Border: true,
+				Layout: d.HBox{Margins: d.Margins{Left: 10, Top: 8, Right: 10, Bottom: 8}, Spacing: 8, Alignment: d.AlignHNearVNear},
+				Children: []d.Widget{
+					d.Composite{
+						StretchFactor: 1,
+						Layout:        d.Grid{Columns: 2, MarginsZero: true, Spacing: 8},
 						Children: []d.Widget{
 							caption("保活状态"), value(&v.keepalive),
-							caption("当前云电脑"), value(&v.desktop),
 							caption("当前积分"), value(&v.points),
-							caption("积分同步"), value(&v.pointsSync),
 							caption("最近错误"), value(&v.lastError),
 						},
 					},
+					d.Composite{
+						StretchFactor: 1,
+						Layout:        d.Grid{Columns: 2, MarginsZero: true, Spacing: 8},
+						Children: []d.Widget{
+							caption("当前云电脑"), value(&v.desktop),
+							caption("积分同步时间"), value(&v.pointsSync),
+						},
+					},
+				},
+			},
+			d.Composite{
+				Layout: d.HBox{MarginsZero: true, Spacing: 8, Alignment: d.AlignHNearVNear},
+				Children: []d.Widget{
 					d.GroupBox{
-						Title:  "自动兑换",
-						Layout: d.Grid{Columns: 2, Spacing: 8},
+						Title:         "自动兑换",
+						StretchFactor: 1,
+						Layout:        d.Grid{Columns: 2, Spacing: 8},
 						Children: []d.Widget{
 							caption("兑换状态"), value(&v.redeem),
 							caption("目标云电脑"), value(&v.redeemDesktop),
 							caption("目标商品"), value(&v.redeemProduct),
+							caption("下次兑换时间"), value(&v.redeemNext),
 						},
 					},
 					d.GroupBox{
-						Title:  "积分任务",
-						Layout: d.Grid{Columns: 2, Spacing: 8},
+						Title:         "积分任务",
+						StretchFactor: 1,
+						Layout:        d.Grid{Columns: 2, Spacing: 8},
 						Children: []d.Widget{
 							caption("登录 AI"), value(&v.loginAITask),
 							caption("使用 1 小时"), value(&v.usageTask),
 							caption("AI 积分"), value(&v.aiPointsTask),
 						},
 					},
-					d.GroupBox{
-						Title:  "快捷操作",
-						Layout: d.Grid{Columns: 2, Spacing: 8},
-						Children: []d.Widget{
-							d.PushButton{AssignTo: &v.loginButton, Text: "账号登录", OnClicked: v.openLogin},
-							d.PushButton{AssignTo: &v.bindButton, Text: "绑定设备", OnClicked: v.openBinding},
-							d.PushButton{AssignTo: &v.aiButton, Text: "执行 AI 任务", OnClicked: func() { v.runTask("AI 任务", v.runtime.RunAITask) }},
-							d.PushButton{AssignTo: &v.pointsButton, Text: "刷新积分", OnClicked: func() { v.runTask("刷新积分", v.runtime.RunPointsTask) }},
-							d.PushButton{AssignTo: &v.redeemButton, Text: "检查兑换", OnClicked: func() { v.runTask("检查兑换", v.runtime.RunRedeemTask) }},
-							d.PushButton{AssignTo: &v.redeemSettingsButton, Text: "兑换设置", OnClicked: v.openRedeemSettings},
-							d.PushButton{AssignTo: &v.settingsButton, Text: "设置", OnClicked: v.openSettings},
-							d.PushButton{AssignTo: &v.logsButton, Text: "日志", OnClicked: v.openLogs},
-							d.PushButton{AssignTo: &v.logoutButton, Text: "退出账号", OnClicked: v.logout},
-							d.PushButton{AssignTo: &v.aboutButton, Text: "关于", OnClicked: v.openAbout},
-						},
-					},
+				},
+			},
+			d.GroupBox{
+				Title:  "快捷操作",
+				Layout: d.Grid{Columns: 5, Spacing: 8},
+				Children: []d.Widget{
+					d.PushButton{AssignTo: &v.loginButton, Text: "账号登录", OnClicked: v.openLogin},
+					d.PushButton{AssignTo: &v.bindButton, Text: "绑定设备", OnClicked: v.openBinding},
+					d.PushButton{AssignTo: &v.aiButton, Text: "执行 AI 任务", OnClicked: func() { v.runTask("AI 任务", v.runtime.RunAITask) }},
+					d.PushButton{AssignTo: &v.pointsButton, Text: "刷新积分", OnClicked: func() { v.runTask("刷新积分", v.runtime.RunPointsTask) }},
+					d.PushButton{AssignTo: &v.redeemButton, Text: "检查兑换", OnClicked: func() { v.runTask("检查兑换", v.runtime.RunRedeemTask) }},
+					d.PushButton{AssignTo: &v.redeemSettingsButton, Text: "兑换设置", OnClicked: v.openRedeemSettings},
+					d.PushButton{AssignTo: &v.settingsButton, Text: "设置", OnClicked: v.openSettings},
+					d.PushButton{AssignTo: &v.logsButton, Text: "日志", OnClicked: v.openLogs},
+					d.PushButton{AssignTo: &v.aboutButton, Text: "关于", OnClicked: v.openAbout},
+					d.PushButton{AssignTo: &v.logoutButton, Text: "退出账号", OnClicked: v.logout},
 				},
 			},
 		},
@@ -340,6 +359,7 @@ func (v *walkMainView) applyState(state app.State) {
 		configuredProduct = fmt.Sprintf("%s（%d 积分）", configuredProduct, state.RedeemCostPoints)
 	}
 	setWalkText(v.redeemProduct, configuredProduct)
+	setWalkText(v.redeemNext, redeemNextRunText(state))
 
 	lastError := state.LastError
 	if lastError == "" {
@@ -361,6 +381,19 @@ func setWalkText(label *walk.TextLabel, text string) {
 	}
 	_ = label.SetText(text)
 	label.SetTextColor(walk.Color(statusColorDefault))
+}
+
+func redeemNextRunText(state app.State) string {
+	if state.RedeemSummary == "上次兑换结果不确定，已停止自动兑换" {
+		return "待确认上一笔"
+	}
+	if !state.RedeemEnabled {
+		return "未启用"
+	}
+	if state.RedeemTask.NextRun.IsZero() {
+		return "计算中"
+	}
+	return state.RedeemTask.NextRun.Local().Format("01-02 15:04")
 }
 
 func setWalkStatus(label *walk.TextLabel, text string, color uint32) {

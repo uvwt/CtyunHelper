@@ -110,13 +110,29 @@ func (s *Scheduler) Start(ctx context.Context) {
 }
 
 func (s *Scheduler) RunNow(ctx context.Context, name string) error {
+	return s.runNow(ctx, name, nil)
+}
+
+// RunNowWith 复用已注册 Job 的运行状态与不重入保护，但允许手动触发时
+// 使用一条更适合交互场景的执行路径。定时调度仍始终执行注册时的 Run。
+func (s *Scheduler) RunNowWith(ctx context.Context, name string, run func(context.Context) error) error {
+	if run == nil {
+		return fmt.Errorf("automation: 手动 Job Run 不能为空")
+	}
+	return s.runNow(ctx, name, run)
+}
+
+func (s *Scheduler) runNow(ctx context.Context, name string, run func(context.Context) error) error {
 	s.mu.RLock()
 	job := s.jobs[name]
 	s.mu.RUnlock()
 	if job == nil {
 		return fmt.Errorf("automation: 未找到 Job %s", name)
 	}
-	return s.runJob(ctx, job, s.now())
+	if run == nil {
+		run = job.config.Run
+	}
+	return s.runJob(ctx, job, s.now(), run)
 }
 
 func (s *Scheduler) State(name string) (JobState, bool) {
@@ -148,12 +164,12 @@ func (s *Scheduler) runSchedule(ctx context.Context, job *scheduledJob) {
 		case <-timer.C:
 			// Windows 从睡眠恢复后 Timer 最多触发一次；下一轮会基于当前时间
 			// 重新计算，不补跑所有错过的时间点，避免唤醒后请求风暴。
-			_ = s.runJob(ctx, job, s.now())
+			_ = s.runJob(ctx, job, s.now(), job.config.Run)
 		}
 	}
 }
 
-func (s *Scheduler) runJob(ctx context.Context, job *scheduledJob, now time.Time) error {
+func (s *Scheduler) runJob(ctx context.Context, job *scheduledJob, now time.Time, run func(context.Context) error) error {
 	job.mu.Lock()
 	if job.state.Running {
 		job.mu.Unlock()
@@ -166,7 +182,7 @@ func (s *Scheduler) runJob(ctx context.Context, job *scheduledJob, now time.Time
 	job.mu.Unlock()
 	s.publish(runningState)
 
-	err := job.config.Run(ctx)
+	err := run(ctx)
 	finishedState := job.update(func(state *JobState) {
 		state.Running = false
 		if err != nil {

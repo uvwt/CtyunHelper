@@ -96,3 +96,34 @@ func TestTaskAutomationRedeemUpdatesModelAfterSingleOrder(t *testing.T) {
 		t.Fatalf("safety = %#v", guard.Snapshot())
 	}
 }
+
+func TestTaskAutomationManualRedeemReturnsWhenUsageTaskIsIncomplete(t *testing.T) {
+	model := NewModel(State{Account: "account", Connection: ConnectionOnline})
+	client := &appPointsRedeemClient{
+		tasks: []points.Task{{Name: automation.UsageTaskName, Status: 0, CurrentProgress: 12}},
+		value: 650,
+	}
+	tasks, guard := newAppAutomationForPoints(t, model, client, true)
+	if err := tasks.RunRedeem(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	state := model.Snapshot()
+	if client.placeCalls != 0 || guard.Snapshot().DailyActions[automation.ActionRedeem] != 0 {
+		t.Fatalf("manual check must not redeem early: calls=%d safety=%#v", client.placeCalls, guard.Snapshot())
+	}
+	if state.Points != 650 || state.RedeemSummary != "使用1小时任务未完成，暂不兑换" {
+		t.Fatalf("state = %#v", state)
+	}
+}
+
+func TestTaskAutomationUsagePollingDoesNotOverwritePointsWithZero(t *testing.T) {
+	model := NewModel(State{Points: 777})
+	tasks := &TaskAutomation{model: model}
+	tasks.applyPointsTaskSnapshot(automation.PointsSnapshot{
+		UsageTaskFound: true, UsageTaskStatus: 0, UsageProgress: 12,
+	})
+	state := model.Snapshot()
+	if state.Points != 777 || !state.UsageTask.Found || state.UsageTask.Progress != 12 {
+		t.Fatalf("state = %#v", state)
+	}
+}

@@ -76,3 +76,32 @@ func TestSchedulerStoresLastError(t *testing.T) {
 		t.Fatalf("state = %#v", state)
 	}
 }
+
+func TestSchedulerRunNowWithUsesAlternateRunner(t *testing.T) {
+	scheduler := NewScheduler(SchedulerOptions{Now: time.Now})
+	var scheduledCalls atomic.Int32
+	var manualCalls atomic.Int32
+	if err := scheduler.Register(JobConfig{
+		Name:  "redeem",
+		Times: []ClockTime{{Hour: 4}},
+		Run: func(context.Context) error {
+			scheduledCalls.Add(1)
+			return nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := scheduler.RunNowWith(context.Background(), "redeem", func(context.Context) error {
+		manualCalls.Add(1)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if scheduledCalls.Load() != 0 || manualCalls.Load() != 1 {
+		t.Fatalf("scheduled=%d manual=%d", scheduledCalls.Load(), manualCalls.Load())
+	}
+	state, ok := scheduler.State("redeem")
+	if !ok || state.Running || state.LastRun.IsZero() || state.LastError != "" {
+		t.Fatalf("state = %#v, ok=%v", state, ok)
+	}
+}

@@ -91,25 +91,7 @@ func NewTaskAutomationWithOptions(model *Model, options TaskAutomationOptions) (
 			Name:  redeemJobName,
 			Times: []automation.ClockTime{{Hour: 4, Minute: 5}, {Hour: 6, Minute: 5}},
 			Run: func(ctx context.Context) error {
-				value.activityMu.RLock()
-				defer value.activityMu.RUnlock()
-				state := model.Snapshot()
-				if state.AutomationPaused || state.Connection == ConnectionAuth || state.Connection == ConnectionDeviceBind || !state.RedeemEnabled {
-					return nil
-				}
-				value.pointsMu.Lock()
-				defer value.pointsMu.Unlock()
-
-				if options.PointsJob != nil {
-					snapshot, err := options.PointsJob.WaitUsageAndRefresh(ctx, value.applyPointsSnapshot)
-					if err != nil {
-						return err
-					}
-					value.applyPointsSnapshot(snapshot)
-				}
-				result, err := value.redeemJob.Run(ctx)
-				value.applyRedeemResult(result, err)
-				return err
+				return value.runRedeem(ctx, true)
 			},
 		}); err != nil {
 			return nil, err
@@ -151,7 +133,47 @@ func (a *TaskAutomation) RunRedeem(ctx context.Context) error {
 	if !a.model.Snapshot().RedeemEnabled {
 		return fmt.Errorf("app: 自动兑换未启用或当前账号不匹配")
 	}
-	return a.scheduler.RunNow(ctx, redeemJobName)
+	return a.scheduler.RunNowWith(ctx, redeemJobName, func(ctx context.Context) error {
+		return a.runRedeem(ctx, false)
+	})
+}
+
+// runRedeem 区分自动调度和用户手动检查：自动调度保留旧脚本最长 80 分钟
+// 等待“使用1小时”的语义；手动点击只读取一次当前状态，未完成时立即返回，
+// 避免 UI 看起来长时间卡住，同时也绝不会提前下单。
+func (a *TaskAutomation) runRedeem(ctx context.Context, waitUsage bool) error {
+	a.activityMu.RLock()
+	defer a.activityMu.RUnlock()
+	state := a.model.Snapshot()
+	if state.AutomationPaused || state.Connection == ConnectionAuth || state.Connection == ConnectionDeviceBind || !state.RedeemEnabled {
+		return nil
+	}
+
+	a.pointsMu.Lock()
+	defer a.pointsMu.Unlock()
+	if a.pointsJob != nil {
+		var (
+			snapshot automation.PointsSnapshot
+			err      error
+		)
+		if waitUsage {
+			snapshot, err = a.pointsJob.WaitUsageAndRefresh(ctx, a.applyPointsTaskSnapshot)
+		} else {
+			snapshot, err = a.pointsJob.Refresh(ctx)
+		}
+		if err != nil {
+			return err
+		}
+		a.applyPointsSnapshot(snapshot)
+		if !waitUsage && snapshot.UsageTaskFound && snapshot.UsageTaskStatus != automation.TaskDone {
+			a.applyRedeemResult(automation.RedeemResult{SkippedReason: "使用1小时任务未完成，暂不兑换"}, nil)
+			return nil
+		}
+	}
+
+	result, err := a.redeemJob.Run(ctx)
+	a.applyRedeemResult(result, err)
+	return err
 }
 
 func (a *TaskAutomation) UpdateAccount(account string) {
@@ -196,16 +218,28 @@ func (a *TaskAutomation) UpdateAccount(account string) {
 func (a *TaskAutomation) applyPointsSnapshot(snapshot automation.PointsSnapshot) {
 	a.model.Update(func(state *State) {
 		state.Points = snapshot.Points
-		state.LoginAITask = PointsTaskStatus{
-			Found: snapshot.LoginAITaskFound, Status: snapshot.LoginAITaskStatus, Progress: snapshot.LoginAIProgress,
-		}
-		state.UsageTask = PointsTaskStatus{
-			Found: snapshot.UsageTaskFound, Status: snapshot.UsageTaskStatus, Progress: snapshot.UsageProgress,
-		}
-		state.AIPointsTask = PointsTaskStatus{
-			Found: snapshot.AITaskFound, Status: snapshot.AITaskStatus, Progress: snapshot.AITaskProgress,
-		}
+		applyPointsTasks(state, snapshot)
 	})
+}
+
+// 等待“使用1小时”时的中间快照还没有读取积分余额，只更新任务状态，
+// 避免把 PointsSnapshot 的零值误显示成真实余额 0。
+func (a *TaskAutomation) applyPointsTaskSnapshot(snapshot automation.PointsSnapshot) {
+	a.model.Update(func(state *State) {
+		applyPointsTasks(state, snapshot)
+	})
+}
+
+func applyPointsTasks(state *State, snapshot automation.PointsSnapshot) {
+	state.LoginAITask = PointsTaskStatus{
+		Found: snapshot.LoginAITaskFound, Status: snapshot.LoginAITaskStatus, Progress: snapshot.LoginAIProgress,
+	}
+	state.UsageTask = PointsTaskStatus{
+		Found: snapshot.UsageTaskFound, Status: snapshot.UsageTaskStatus, Progress: snapshot.UsageProgress,
+	}
+	state.AIPointsTask = PointsTaskStatus{
+		Found: snapshot.AITaskFound, Status: snapshot.AITaskStatus, Progress: snapshot.AITaskProgress,
+	}
 }
 
 func (a *TaskAutomation) applyRedeemResult(result automation.RedeemResult, runErr error) {

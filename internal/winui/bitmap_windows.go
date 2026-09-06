@@ -5,7 +5,10 @@ package winui
 import (
 	"bytes"
 	"fmt"
-	"image/png"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"syscall"
 	"unsafe"
 )
@@ -50,11 +53,20 @@ var (
 	sendMessageW     = user32.NewProc("SendMessageW")
 )
 
-// setPNGOnStatic 用标准库解码 PNG，再创建 32-bit top-down DIB，避免验证码落盘。
-func setPNGOnStatic(control uintptr, raw []byte) (uintptr, error) {
-	imageValue, err := png.Decode(bytes.NewReader(raw))
+// decodeCaptchaImage 只解码标准库支持的图片格式，验证码始终保留在内存中。
+func decodeCaptchaImage(raw []byte) (image.Image, error) {
+	imageValue, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
-		return 0, fmt.Errorf("解析验证码 PNG: %w", err)
+		return nil, fmt.Errorf("解析验证码图片: %w", err)
+	}
+	return imageValue, nil
+}
+
+// setImageOnStatic 将验证码图片转换为 32-bit top-down DIB，不把验证码写入磁盘。
+func setImageOnStatic(control uintptr, raw []byte) (uintptr, error) {
+	imageValue, err := decodeCaptchaImage(raw)
+	if err != nil {
+		return 0, err
 	}
 	bounds := imageValue.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()

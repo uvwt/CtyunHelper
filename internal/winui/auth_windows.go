@@ -224,7 +224,7 @@ func loginWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintp
 			return 0
 		}
 		showLoginCaptchaControls(state)
-		bitmap, err := setPNGOnStatic(state.captchaView, captcha)
+		bitmap, err := setImageOnStatic(state.captchaView, captcha)
 		clear(captcha)
 		if err != nil {
 			showMessage(hwnd, "验证码", err.Error(), mbIconError)
@@ -446,7 +446,7 @@ func bindingWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uin
 			return 0
 		}
 		setControlText(state.mobileText, "短信验证号码："+mobile)
-		bitmap, err := setPNGOnStatic(state.captchaView, captcha)
+		bitmap, err := setImageOnStatic(state.captchaView, captcha)
 		clear(captcha)
 		if err != nil {
 			showMessage(hwnd, "验证码", err.Error(), mbIconError)

@@ -76,9 +76,10 @@ func TestNativeLoginHTTPFlowStartsWithoutCaptcha(t *testing.T) {
 }
 
 func TestLoginCaptchaIsFetchedOnlyWhenRequested(t *testing.T) {
+	captchaImage := testCaptchaPNG(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("CTG-CAPTCHA-KEY", "captcha-key")
-		w.Write([]byte("0123456789abcdefghijklmnop"))
+		_, _ = w.Write(captchaImage)
 	}))
 	defer server.Close()
 	client := NewClient(DeviceIdentity{Code: "device-code"}, ClientOptions{APIOrigin: server.URL, HTTPClient: server.Client()})
@@ -86,8 +87,23 @@ func TestLoginCaptchaIsFetchedOnlyWhenRequested(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if captcha.Key != "captcha-key" || len(captcha.Image) == 0 {
-		t.Fatalf("captcha = %#v", captcha)
+	if captcha.Key != "captcha-key" || len(captcha.Image) != len(captchaImage) {
+		t.Fatalf("captcha key=%q image-bytes=%d", captcha.Key, len(captcha.Image))
+	}
+}
+
+func TestLoginCaptchaRejectsNonImageResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("CTG-CAPTCHA-KEY", "captcha-key")
+		_, _ = w.Write([]byte(`{"code":500,"message":"gateway error"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(DeviceIdentity{Code: "device-code"}, ClientOptions{APIOrigin: server.URL, HTTPClient: server.Client()})
+	_, err := client.GetLoginCaptcha(context.Background(), "account")
+	if err == nil || !strings.Contains(err.Error(), "登录验证码响应不是支持的图片格式") {
+		t.Fatalf("expected non-image captcha error, got %v", err)
 	}
 }
 

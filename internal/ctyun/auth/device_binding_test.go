@@ -14,6 +14,7 @@ import (
 
 func TestDeviceBindingFollowsOfficialFlow(t *testing.T) {
 	fixedNow := time.UnixMilli(1700000000000)
+	captchaImage := testCaptchaPNG(t)
 	profile := Profile{
 		UserID: 123, UserEID: "eid", TenantID: 456,
 		SecretKey: "test-key", CommonLoginReqHeader: "common",
@@ -26,7 +27,7 @@ func TestDeviceBindingFollowsOfficialFlow(t *testing.T) {
 		case "/api/auth/client/validateCode/captcha":
 			assertBindingSignature(t, r, profile, "node")
 			w.Header().Set("CTG-CAPTCHA-KEY", "captcha-key")
-			_, _ = w.Write([]byte(strings.Repeat("x", 128)))
+			_, _ = w.Write(captchaImage)
 		case "/api/cdserv/client/device/getSmsCode":
 			assertBindingSignature(t, r, profile, "node")
 			query := r.URL.Query()
@@ -68,7 +69,7 @@ func TestDeviceBindingFollowsOfficialFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if challenge.CaptchaKey != "captcha-key" || challenge.Mobile != "mobile" || len(challenge.Captcha) != 128 {
+	if challenge.CaptchaKey != "captcha-key" || challenge.Mobile != "mobile" || len(challenge.Captcha) != len(captchaImage) {
 		t.Fatalf("challenge = %#v", challenge)
 	}
 	smsKey, err := client.SendDeviceSMS(context.Background(), "4321", challenge.CaptchaKey)
@@ -88,6 +89,39 @@ func TestDeviceBindingFollowsOfficialFlow(t *testing.T) {
 	current, ok := client.Profile()
 	if !ok || current.BondedDevice {
 		t.Fatalf("low-level binding must not commit profile before app persistence: bonded=%v ok=%v", current.BondedDevice, ok)
+	}
+}
+
+func TestDeviceBindingRejectsNonImageCaptcha(t *testing.T) {
+	fixedNow := time.UnixMilli(1700000000000)
+	profile := Profile{
+		UserID: 123, UserEID: "eid", TenantID: 456,
+		SecretKey: "test-key", CommonLoginReqHeader: "common",
+		MobilePhone: "mobile", BondedDevice: false,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/cdserv/client/getServData":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"serverNodeId": "node"}})
+		case "/api/auth/client/validateCode/captcha":
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("CTG-CAPTCHA-KEY", "captcha-key")
+			_, _ = w.Write([]byte(`{"code":500,"message":"gateway error"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(DeviceIdentity{Code: "ctyun_fixed"}, ClientOptions{
+		APIOrigin: server.URL, HTTPClient: server.Client(),
+		Now:    func() time.Time { return fixedNow },
+		Random: strings.NewReader(strings.Repeat("r", 8192)),
+	})
+	client.UseProfile(profile)
+	_, err := client.BeginDeviceBinding(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "设备验证码响应不是支持的图片格式") {
+		t.Fatalf("expected non-image device captcha error, got %v", err)
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -54,12 +53,9 @@ func (c *Client) BeginDeviceBinding(ctx context.Context) (DeviceBindingChallenge
 	if response.StatusCode != http.StatusOK {
 		return DeviceBindingChallenge{}, fmt.Errorf("auth: 设备验证码 HTTP %d", response.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, 2<<20))
+	body, err := readCaptchaImage(response, "设备验证码")
 	if err != nil {
-		return DeviceBindingChallenge{}, fmt.Errorf("auth: 读取设备验证码: %w", err)
-	}
-	if len(body) < 16 {
-		return DeviceBindingChallenge{}, fmt.Errorf("auth: 设备验证码响应过短")
+		return DeviceBindingChallenge{}, err
 	}
 	key := response.Header.Get("CTG-CAPTCHA-KEY")
 	if key == "" {

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -150,14 +149,15 @@ func (c *Client) downloadLoginCaptcha(ctx context.Context, account string) ([]by
 	if response.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("auth: captcha HTTP %d", response.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, 2<<20))
+	body, err := readCaptchaImage(response, "登录验证码")
 	if err != nil {
-		return nil, "", fmt.Errorf("auth: 读取验证码: %w", err)
+		return nil, "", err
 	}
-	if len(body) < 16 {
-		return nil, "", fmt.Errorf("auth: 验证码响应过短")
+	key := response.Header.Get("CTG-CAPTCHA-KEY")
+	if key == "" {
+		return nil, "", fmt.Errorf("auth: 登录验证码缺少 CTG-CAPTCHA-KEY")
 	}
-	return body, response.Header.Get("CTG-CAPTCHA-KEY"), nil
+	return body, key, nil
 }
 
 type loginData struct {

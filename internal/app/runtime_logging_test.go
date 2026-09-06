@@ -25,6 +25,25 @@ func TestHealthyBackoffIsLoggedAsInfo(t *testing.T) {
 	}
 }
 
+func TestUsageTaskProgressIsLoggedWithoutSensitiveFields(t *testing.T) {
+	logger, err := logging.New(logging.Options{Path: filepath.Join(t.TempDir(), "app.log")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logger.Close()
+
+	runtime := NewRuntime(nil, nil, nil, nil, RuntimeOptions{Logger: logger})
+	runtime.logStateTransition(State{}, State{UsageTask: PointsTaskStatus{Found: true, Status: 0, Progress: 1100}})
+	entries := logger.Snapshot(10)
+	if len(entries) != 1 {
+		t.Fatalf("usage logs = %#v", entries)
+	}
+	text := entries[0].Line()
+	if !strings.Contains(text, "使用1小时进度更新") || !strings.Contains(text, "status=0") || !strings.Contains(text, "progress=1100") {
+		t.Fatalf("usage log = %q", text)
+	}
+}
+
 func TestRuntimePublishesLogEventsAndRecordsStateTransitions(t *testing.T) {
 	logger, err := logging.New(logging.Options{Path: filepath.Join(t.TempDir(), "app.log"), MemoryEntries: 50})
 	if err != nil {

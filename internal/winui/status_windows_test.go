@@ -44,6 +44,21 @@ func TestPointsTaskStatusTextShowsProgressAndPending(t *testing.T) {
 	}
 }
 
+func TestUsageTaskStatusTextShowsMinutesWithoutLocallyCompleting(t *testing.T) {
+	text, color := usageTaskStatusText(app.PointsTaskStatus{Found: true, Status: 0, Progress: 1100})
+	if text != "进行中 18/60分" || color != statusColorWarning {
+		t.Fatalf("usage status = %q color=%#x", text, color)
+	}
+	text, color = usageTaskStatusText(app.PointsTaskStatus{Found: true, Status: 0, Progress: 3600})
+	if text != "进行中 60/60分" || color != statusColorWarning {
+		t.Fatalf("unfinished 3600 status = %q color=%#x", text, color)
+	}
+	text, color = usageTaskStatusText(app.PointsTaskStatus{Found: true, Status: 2, Progress: 3600})
+	if text != "已完成" || color != statusColorSuccess {
+		t.Fatalf("completed usage status = %q color=%#x", text, color)
+	}
+}
+
 func TestHomeStatusIndicatorTextUsesSolidDot(t *testing.T) {
 	if got := homeStatusIndicatorText("已完成"); got != "● 已完成" {
 		t.Fatalf("indicator = %q", got)

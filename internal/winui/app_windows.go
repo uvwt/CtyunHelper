@@ -450,7 +450,7 @@ func createStatusText(hwnd, instance uintptr) {
 	createLabel(hwnd, instance, "登录AI云电脑", 46, 224, 100, 24)
 	homeStatus.loginAITask = createLabel(hwnd, instance, "", 150, 224, 118, 24)
 	createLabel(hwnd, instance, "使用1小时", 308, 224, 80, 24)
-	homeStatus.usageTask = createLabel(hwnd, instance, "", 392, 224, 120, 24)
+	homeStatus.usageTask = createLabel(hwnd, instance, "", 392, 224, 140, 24)
 	createLabel(hwnd, instance, "与AI对话1次", 552, 224, 100, 24)
 	homeStatus.aiPointsTask = createLabel(hwnd, instance, "", 656, 224, 178, 24)
 }
@@ -591,7 +591,7 @@ func updateStatusText(state app.State) {
 
 	loginAI, loginAIColor := pointsTaskStatusText(state.LoginAITask)
 	setHomeStatusState(homeStatus.loginAITask, loginAI, loginAIColor)
-	usage, usageColor := pointsTaskStatusText(state.UsageTask)
+	usage, usageColor := usageTaskStatusText(state.UsageTask)
 	setHomeStatusState(homeStatus.usageTask, usage, usageColor)
 	aiPoints, aiPointsColor := pointsTaskStatusText(state.AIPointsTask)
 	setHomeStatusState(homeStatus.aiPointsTask, aiPoints, aiPointsColor)
@@ -653,6 +653,25 @@ func pointsTaskStatusText(status app.PointsTaskStatus) (string, uint32) {
 	}
 	if status.Progress > 0 {
 		return fmt.Sprintf("进行中（进度 %d）", status.Progress), statusColorWarning
+	}
+	return "待完成", statusColorWarning
+}
+
+// usageTaskStatusText 把服务端 currentProgress 的秒数换算成用户可读分钟数。
+// 任务是否完成仍只信任官方 status，避免本地进度达到 3600 时提前误判完成。
+func usageTaskStatusText(status app.PointsTaskStatus) (string, uint32) {
+	if !status.Found {
+		return "等待刷新", statusColorMuted
+	}
+	if status.Status == 2 {
+		return "已完成", statusColorSuccess
+	}
+	if status.Progress > 0 {
+		minutes := status.Progress / 60
+		if minutes > 60 {
+			minutes = 60
+		}
+		return fmt.Sprintf("进行中 %d/60分", minutes), statusColorWarning
 	}
 	return "待完成", statusColorWarning
 }

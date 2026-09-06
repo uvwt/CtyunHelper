@@ -50,6 +50,12 @@ func (r *Runtime) logStateTransition(previous, current State) {
 	if previous.Points != current.Points {
 		r.logger.Info("points", "积分余额更新", logging.Int("points", current.Points))
 	}
+	if previous.UsageTask != current.UsageTask && current.UsageTask.Found {
+		r.logger.Info("points", "使用1小时进度更新",
+			logging.Int("status", current.UsageTask.Status),
+			logging.Int("progress", current.UsageTask.Progress),
+		)
+	}
 	if previous.AutomationPaused != current.AutomationPaused {
 		if current.AutomationPaused {
 			r.logger.Info("automation", "自动任务已暂停")

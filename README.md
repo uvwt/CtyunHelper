@@ -143,6 +143,18 @@ CtyunHelper 可以自动执行“与AI对话1次”积分任务，也可以通�
 
 当前版本：**0.1.1**
 
+## 开发构建
+
+Windows 界面使用 `github.com/tailscale/walk`，核心业务仍保持在 Go 的 `internal/app`、`internal/automation`、`internal/ctyun` 等包中。UI 层只负责状态展示和用户交互。
+
+```powershell
+go test ./...
+go build -ldflags "-H=windowsgui" -o CtyunHelper.exe ./cmd/ctyun-helper
+powershell -ExecutionPolicy Bypass -File .\scripts\embed-icon-windows.ps1 -Executable .\CtyunHelper.exe
+```
+
+最后一步会把应用图标、Common Controls v6 和 Per-Monitor V2 DPI manifest 直接写入 EXE；最终仍为单文件程序，不需要额外运行时 DLL。
+
 ## 项目
 
 GitHub：<https://github.com/uvwt/CtyunHelper>

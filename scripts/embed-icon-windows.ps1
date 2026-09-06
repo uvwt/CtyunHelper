@@ -3,15 +3,29 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Executable,
 
-    [string]$Icon = (Join-Path $PSScriptRoot '..\internal\winui\assets\ctyunhelper.ico')
+    [string]$Icon,
+
+    [string]$Manifest
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# PowerShell may evaluate parameter default expressions before $PSScriptRoot is
+# populated when this script is launched through another powershell.exe. Resolve
+# repository-relative defaults only after parameter binding has completed.
+if ([string]::IsNullOrWhiteSpace($Icon)) {
+    $Icon = Join-Path $PSScriptRoot '..\internal\winui\assets\ctyunhelper.ico'
+}
+if ([string]::IsNullOrWhiteSpace($Manifest)) {
+    $Manifest = Join-Path $PSScriptRoot '..\internal\winui\assets\ctyunhelper.exe.manifest'
+}
+
 $exePath = (Resolve-Path $Executable).Path
 $iconPath = (Resolve-Path $Icon).Path
+$manifestPath = (Resolve-Path $Manifest).Path
 $iconBytes = [System.IO.File]::ReadAllBytes($iconPath)
+$manifestBytes = [System.IO.File]::ReadAllBytes($manifestPath)
 
 if ($iconBytes.Length -lt 22 -or [BitConverter]::ToUInt16($iconBytes, 0) -ne 0 -or [BitConverter]::ToUInt16($iconBytes, 2) -ne 1) {
     throw "Invalid ICO file: $iconPath"
@@ -84,6 +98,12 @@ try {
     if (-not [CtyunHelper.WinResourceNative]::UpdateResource($update, [IntPtr]14, [IntPtr]1, 0, $group, $group.Length)) {
         throw "Writing RT_GROUP_ICON failed. Win32=$([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
     }
+
+    # RT_MANIFEST (24), ID 1 enables Common Controls v6 and Per-Monitor V2 DPI
+    # without introducing an external resource compiler or runtime file.
+    if (-not [CtyunHelper.WinResourceNative]::UpdateResource($update, [IntPtr]24, [IntPtr]1, 0, $manifestBytes, $manifestBytes.Length)) {
+        throw "Writing RT_MANIFEST failed. Win32=$([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+    }
     $commit = $true
 }
 finally {
@@ -92,4 +112,4 @@ finally {
     }
 }
 
-Write-Host "Embedded Windows application icon: $exePath"
+Write-Host "Embedded Windows icon and manifest: $exePath"

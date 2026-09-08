@@ -121,6 +121,10 @@ func (k *Keepalive) applyClinkSnapshot(snapshot clink.Snapshot) {
 	k.model.Update(func(state *State) {
 		state.OnlineSince = snapshot.OnlineSince
 		state.LastError = snapshot.LastError
+		state.REDQChallenges = snapshot.REDQChallenges
+		state.REDQResponses = snapshot.REDQResponses
+		state.UserInfoRequests = snapshot.UserInfoRequests
+		state.UserInfoResponses = snapshot.UserInfoResponses
 		switch snapshot.State {
 		case clink.StateResolving, clink.StateConnecting, clink.StateHandshaking:
 			state.Connection = ConnectionConnecting

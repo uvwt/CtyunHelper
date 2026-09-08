@@ -40,6 +40,10 @@ type State struct {
 	DesktopName       string
 	Connection        ConnectionState
 	OnlineSince       time.Time
+	REDQChallenges    int
+	REDQResponses     int
+	UserInfoRequests  int
+	UserInfoResponses int
 	Points            int
 	LoginAITask       PointsTaskStatus
 	UsageTask         PointsTaskStatus

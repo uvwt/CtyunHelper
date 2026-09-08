@@ -176,6 +176,9 @@ func (w *Worker) runCycleWithURL(ctx context.Context, endpoint string) error {
 			continue
 		}
 		if IsREDQ(data) {
+			w.session.recordProtocolEvent(func(snapshot *Snapshot) {
+				snapshot.REDQChallenges++
+			})
 			response, err := BuildREDQResponse(data)
 			if err != nil {
 				return err
@@ -183,6 +186,9 @@ func (w *Worker) runCycleWithURL(ctx context.Context, endpoint string) error {
 			if err := ws.WriteMessage(websocket.BinaryMessage, response); err != nil {
 				return fmt.Errorf("clink: 发送 REDQ 响应: %w", err)
 			}
+			w.session.recordProtocolEvent(func(snapshot *Snapshot) {
+				snapshot.REDQResponses++
+			})
 			continue
 		}
 
@@ -191,6 +197,9 @@ func (w *Worker) runCycleWithURL(ctx context.Context, endpoint string) error {
 			if message.Type != 103 {
 				continue
 			}
+			w.session.recordProtocolEvent(func(snapshot *Snapshot) {
+				snapshot.UserInfoRequests++
+			})
 			userInfo, err := BuildUserInfoMessage(w.config.UserID, w.config.UserName)
 			if err != nil {
 				return fmt.Errorf("clink: 编码用户信息: %w", err)
@@ -198,6 +207,9 @@ func (w *Worker) runCycleWithURL(ctx context.Context, endpoint string) error {
 			if err := ws.WriteMessage(websocket.BinaryMessage, userInfo); err != nil {
 				return fmt.Errorf("clink: 发送用户信息: %w", err)
 			}
+			w.session.recordProtocolEvent(func(snapshot *Snapshot) {
+				snapshot.UserInfoResponses++
+			})
 		}
 		if parseErr != nil {
 			// CtYun 第三方实现把普通 Clink 消息解析放在独立 try/catch 中：

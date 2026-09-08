@@ -44,6 +44,41 @@ func TestUsageTaskProgressIsLoggedWithoutSensitiveFields(t *testing.T) {
 	}
 }
 
+func TestClinkProtocolProgressIsLoggedWithCounters(t *testing.T) {
+	logger, err := logging.New(logging.Options{Path: filepath.Join(t.TempDir(), "app.log")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logger.Close()
+
+	runtime := NewRuntime(nil, nil, nil, nil, RuntimeOptions{Logger: logger})
+	runtime.logStateTransition(State{}, State{
+		REDQChallenges:    1,
+		REDQResponses:     1,
+		UserInfoRequests:  1,
+		UserInfoResponses: 1,
+	})
+	entries := logger.Snapshot(10)
+	if len(entries) != 4 {
+		t.Fatalf("clink logs = %#v", entries)
+	}
+	text := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		text = append(text, entry.Line())
+	}
+	joined := strings.Join(text, "\n")
+	for _, expected := range []string{
+		"收到 REDQ 保活校验 count=1",
+		"发送 REDQ 保活响应成功 count=1",
+		"收到 103 用户信息请求 count=1",
+		"发送 118 用户信息响应成功 count=1",
+	} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("missing %q in logs: %s", expected, joined)
+		}
+	}
+}
+
 func TestRuntimePublishesLogEventsAndRecordsStateTransitions(t *testing.T) {
 	logger, err := logging.New(logging.Options{Path: filepath.Join(t.TempDir(), "app.log"), MemoryEntries: 50})
 	if err != nil {

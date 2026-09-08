@@ -47,6 +47,18 @@ func (r *Runtime) logStateTransition(previous, current State) {
 	if previous.DesktopName != current.DesktopName && current.DesktopName != "" {
 		r.logger.Info("connection", "已选择云电脑", logging.String("desktop", current.DesktopName))
 	}
+	if previous.REDQChallenges != current.REDQChallenges {
+		r.logger.Info("clink", "收到 REDQ 保活校验", logging.Int("count", current.REDQChallenges))
+	}
+	if previous.REDQResponses != current.REDQResponses {
+		r.logger.Info("clink", "发送 REDQ 保活响应成功", logging.Int("count", current.REDQResponses))
+	}
+	if previous.UserInfoRequests != current.UserInfoRequests {
+		r.logger.Info("clink", "收到 103 用户信息请求", logging.Int("count", current.UserInfoRequests))
+	}
+	if previous.UserInfoResponses != current.UserInfoResponses {
+		r.logger.Info("clink", "发送 118 用户信息响应成功", logging.Int("count", current.UserInfoResponses))
+	}
 	if previous.Points != current.Points {
 		r.logger.Info("points", "积分余额更新", logging.Int("points", current.Points))
 	}

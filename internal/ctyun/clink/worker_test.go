@@ -131,6 +131,10 @@ func TestWorkerCompletesClinkHandshakeAndResponses(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("worker did not stop")
 	}
+	snapshot := worker.Snapshot()
+	if snapshot.REDQChallenges != 1 || snapshot.REDQResponses != 1 || snapshot.UserInfoRequests != 1 || snapshot.UserInfoResponses != 1 {
+		t.Fatalf("protocol counters = %#v", snapshot)
+	}
 }
 
 func syntheticREDQChallenge() []byte {

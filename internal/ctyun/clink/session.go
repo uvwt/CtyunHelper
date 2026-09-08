@@ -6,10 +6,14 @@ import (
 )
 
 type Snapshot struct {
-	State       State
-	ChangedAt   time.Time
-	OnlineSince time.Time
-	LastError   string
+	State             State
+	ChangedAt         time.Time
+	OnlineSince       time.Time
+	LastError         string
+	REDQChallenges    int
+	REDQResponses     int
+	UserInfoRequests  int
+	UserInfoResponses int
 }
 
 type Session struct {
@@ -59,4 +63,15 @@ func (s *Session) Transition(next State, err error) error {
 		s.notify(snapshot)
 	}
 	return nil
+}
+
+func (s *Session) recordProtocolEvent(update func(*Snapshot)) {
+	s.mu.Lock()
+	update(&s.snapshot)
+	snapshot := s.snapshot
+	s.mu.Unlock()
+
+	if s.notify != nil {
+		s.notify(snapshot)
+	}
 }

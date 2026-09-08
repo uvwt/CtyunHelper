@@ -11,3 +11,14 @@ func TestDefaultConfigKeepsRedeemDisabled(t *testing.T) {
 		t.Fatalf("redeem defaults = %#v", config.Redeem)
 	}
 }
+
+func TestDefaultConfigKeepsUsagePointsWindowDisabled(t *testing.T) {
+	config := DefaultConfig()
+	window := config.Automation.UsagePointsWindow
+	if window.Enabled {
+		t.Fatal("formal usage-points session must be opt-in")
+	}
+	if window.Start != "04:00" || window.End != "07:00" {
+		t.Fatalf("usage-points window defaults = %#v", window)
+	}
+}

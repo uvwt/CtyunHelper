@@ -20,17 +20,23 @@ func (v *walkMainView) openSettings() {
 	}
 
 	var (
-		dlg               *walk.Dialog
-		automationCheck   *walk.CheckBox
-		startOnLoginCheck *walk.CheckBox
-		saveButton        *walk.PushButton
-		cancelButton      *walk.PushButton
+		dlg                  *walk.Dialog
+		automationCheck      *walk.CheckBox
+		startOnLoginCheck    *walk.CheckBox
+		usageWindowCheck     *walk.CheckBox
+		usageWindowStartEdit *walk.LineEdit
+		usageWindowEndEdit   *walk.LineEdit
+		saveButton           *walk.PushButton
+		cancelButton         *walk.PushButton
 	)
 
 	save := func() {
 		if err := v.runtime.SaveSettings(app.GeneralSettings{
-			AutomationEnabled: automationCheck.Checked(),
-			StartOnLogin:      startOnLoginCheck.Checked(),
+			AutomationEnabled:        automationCheck.Checked(),
+			StartOnLogin:             startOnLoginCheck.Checked(),
+			UsagePointsWindowEnabled: usageWindowCheck.Checked(),
+			UsagePointsWindowStart:   usageWindowStartEdit.Text(),
+			UsagePointsWindowEnd:     usageWindowEndEdit.Text(),
 		}); err != nil {
 			walk.MsgBox(dlg, "设置", err.Error(), walk.MsgBoxIconError|walk.MsgBoxOK)
 			return
@@ -41,13 +47,23 @@ func (v *walkMainView) openSettings() {
 	if err := (d.Dialog{
 		AssignTo: &dlg,
 		Title:    "设置",
-		Size:     d.Size{Width: 420, Height: 250},
-		MinSize:  d.Size{Width: 380, Height: 220},
+		Size:     d.Size{Width: 540, Height: 360},
+		MinSize:  d.Size{Width: 480, Height: 330},
 		Layout:   d.VBox{Margins: d.Margins{Left: 14, Top: 14, Right: 14, Bottom: 14}, Spacing: 10},
 		Children: []d.Widget{
 			d.GroupBox{Title: "运行设置", Layout: d.VBox{Spacing: 8}, Children: []d.Widget{
 				d.CheckBox{AssignTo: &automationCheck, Text: "启用自动任务"},
 				d.CheckBox{AssignTo: &startOnLoginCheck, Text: "登录 Windows 后自动启动"},
+			}},
+			d.GroupBox{Title: "刷积分时间段", Layout: d.VBox{Spacing: 8}, Children: []d.Widget{
+				d.CheckBox{AssignTo: &usageWindowCheck, Text: "在指定时间段使用正式会话刷“使用1小时”积分"},
+				d.Composite{Layout: d.Grid{Columns: 4, Spacing: 8}, Children: []d.Widget{
+					d.Label{Text: "开始"},
+					d.LineEdit{AssignTo: &usageWindowStartEdit, CueBanner: "HH:MM"},
+					d.Label{Text: "结束"},
+					d.LineEdit{AssignTo: &usageWindowEndEdit, CueBanner: "HH:MM"},
+				}},
+				d.Label{Text: "⚠ 启用后，该时间段内会建立正式 MAIN 会话，会抢占/顶掉正在使用的远程会话；时间段外仅使用轻量保活。", EllipsisMode: d.EllipsisNone},
 			}},
 			d.HSpacer{},
 			d.Composite{Layout: d.HBox{MarginsZero: true, Spacing: 8}, Children: []d.Widget{
@@ -68,6 +84,9 @@ func (v *walkMainView) openSettings() {
 	}
 	automationCheck.SetChecked(settings.AutomationEnabled)
 	startOnLoginCheck.SetChecked(settings.StartOnLogin)
+	usageWindowCheck.SetChecked(settings.UsagePointsWindowEnabled)
+	_ = usageWindowStartEdit.SetText(settings.UsagePointsWindowStart)
+	_ = usageWindowEndEdit.SetText(settings.UsagePointsWindowEnd)
 	dlg.Run()
 }
 

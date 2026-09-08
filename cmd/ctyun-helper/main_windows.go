@@ -97,7 +97,15 @@ func buildRuntime() (*app.Runtime, error) {
 			return storage.SaveStateJSON(paths, "safety.json", state)
 		},
 	})
-	keepalive := app.NewKeepalive(authClient, clinkAuthClient, desktopClient, accountStore, guard, model)
+	pointsPolicy, err := app.NewPointsSessionPolicy(app.UsagePointsWindow{
+		Enabled: config.Automation.UsagePointsWindow.Enabled,
+		Start:   config.Automation.UsagePointsWindow.Start,
+		End:     config.Automation.UsagePointsWindow.End,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("初始化刷积分时间段: %w", err)
+	}
+	keepalive := app.NewKeepalive(authClient, clinkAuthClient, desktopClient, accountStore, guard, model, pointsPolicy)
 	authFlow := app.NewAuthFlow(authClient, accountStore, model, guard)
 	aiJob := automation.NewAIJob(pointsClient, eaiClient, guard, "你好")
 	pointsJob := automation.NewPointsJob(pointsClient, automation.PointsJobOptions{})
@@ -128,7 +136,7 @@ func buildRuntime() (*app.Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	settings := app.NewSettingsService(paths, startup, model)
+	settings := app.NewSettingsService(paths, startup, model, pointsPolicy)
 	logger, err := logging.New(logging.Options{Path: filepath.Join(paths.LogDir, "CtyunHelper.log")})
 	if err != nil {
 		return nil, err

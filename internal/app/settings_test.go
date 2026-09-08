@@ -25,7 +25,7 @@ func (f *fakeStartupControl) SetEnabled(enabled bool) error {
 	return nil
 }
 
-func newSettingsFixture(t *testing.T) (storage.Paths, *Model) {
+func newSettingsFixture(t *testing.T) (storage.Paths, *Model, *PointsSessionPolicy) {
 	t.Helper()
 	root := t.TempDir()
 	paths := storage.Paths{ConfigDir: filepath.Join(root, "config"), DataDir: filepath.Join(root, "data")}
@@ -33,36 +33,53 @@ func newSettingsFixture(t *testing.T) (storage.Paths, *Model) {
 	if err := storage.SaveConfig(paths, config); err != nil {
 		t.Fatal(err)
 	}
-	return paths, NewModel(State{AutomationPaused: false})
+	policy, err := NewPointsSessionPolicy(UsagePointsWindow{
+		Enabled: config.Automation.UsagePointsWindow.Enabled,
+		Start:   config.Automation.UsagePointsWindow.Start,
+		End:     config.Automation.UsagePointsWindow.End,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return paths, NewModel(State{AutomationPaused: false}), policy
 }
 
 func TestSettingsSaveUpdatesConfigStartupAndModel(t *testing.T) {
-	paths, model := newSettingsFixture(t)
+	paths, model, policy := newSettingsFixture(t)
 	startup := &fakeStartupControl{}
-	service := NewSettingsService(paths, startup, model)
-	if err := service.Save(GeneralSettings{AutomationEnabled: false, StartOnLogin: true}); err != nil {
+	service := NewSettingsService(paths, startup, model, policy)
+	if err := service.Save(GeneralSettings{
+		AutomationEnabled: true, StartOnLogin: true,
+		UsagePointsWindowEnabled: true, UsagePointsWindowStart: "23:30", UsagePointsWindowEnd: "06:15",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	config, err := storage.LoadConfig(paths)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.Automation.Enabled || !startup.enabled || !model.Snapshot().AutomationPaused {
+	if !config.Automation.Enabled || !startup.enabled || model.Snapshot().AutomationPaused {
 		t.Fatalf("config=%#v startup=%v state=%#v", config.Automation, startup.enabled, model.Snapshot())
+	}
+	if got := config.Automation.UsagePointsWindow; !got.Enabled || got.Start != "23:30" || got.End != "06:15" {
+		t.Fatalf("usage points window = %#v", got)
+	}
+	if got := policy.Snapshot(); !got.Enabled || got.Start != "23:30" || got.End != "06:15" {
+		t.Fatalf("policy window = %#v", got)
 	}
 	current, err := service.Current()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current.AutomationEnabled || !current.StartOnLogin {
+	if !current.AutomationEnabled || !current.StartOnLogin || !current.UsagePointsWindowEnabled || current.UsagePointsWindowStart != "23:30" || current.UsagePointsWindowEnd != "06:15" {
 		t.Fatalf("current = %#v", current)
 	}
 }
 
 func TestSettingsStartupFailureLeavesConfigAndModelUnchanged(t *testing.T) {
-	paths, model := newSettingsFixture(t)
+	paths, model, policy := newSettingsFixture(t)
 	startup := &fakeStartupControl{setErr: errors.New("registry denied")}
-	service := NewSettingsService(paths, startup, model)
+	service := NewSettingsService(paths, startup, model, policy)
 	if err := service.Save(GeneralSettings{AutomationEnabled: false, StartOnLogin: true}); err == nil {
 		t.Fatal("expected startup error")
 	}
@@ -76,9 +93,9 @@ func TestSettingsStartupFailureLeavesConfigAndModelUnchanged(t *testing.T) {
 }
 
 func TestSettingsConfigFailureRollsBackStartup(t *testing.T) {
-	paths, model := newSettingsFixture(t)
+	paths, model, policy := newSettingsFixture(t)
 	startup := &fakeStartupControl{}
-	service := NewSettingsService(paths, startup, model)
+	service := NewSettingsService(paths, startup, model, policy)
 	if err := os.Chmod(paths.ConfigDir, 0o500); err != nil {
 		t.Fatal(err)
 	}

@@ -179,6 +179,7 @@ func TestResolveClinkConnectionUsesLegacyKeepaliveRouteRequest(t *testing.T) {
 				"desktopId": 7, "host": "desktop.internal", "port": "7033",
 				"clinkLvsOutHost": "sh9b2-1-deskclink.ctyun.cn:9011",
 				"caCert":          "ca", "clientCert": "cert", "clientKey": "key",
+				"token": "desktop-token", "tenantMemberAccount": "tenant-account",
 			}},
 		})
 	}))
@@ -193,7 +194,7 @@ func TestResolveClinkConnectionUsesLegacyKeepaliveRouteRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if connection.DesktopID != 7 || connection.ClinkLVSOutHost != "sh9b2-1-deskclink.ctyun.cn:9011" {
+	if connection.DesktopID != 7 || connection.ClinkLVSOutHost != "sh9b2-1-deskclink.ctyun.cn:9011" || connection.Token != "desktop-token" || connection.TenantMemberAccount != "tenant-account" {
 		t.Fatalf("connection = %#v", connection)
 	}
 }

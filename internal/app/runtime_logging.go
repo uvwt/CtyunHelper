@@ -59,6 +59,21 @@ func (r *Runtime) logStateTransition(previous, current State) {
 	if previous.UserInfoResponses != current.UserInfoResponses {
 		r.logger.Info("clink", "发送 118 用户信息响应成功", logging.Int("count", current.UserInfoResponses))
 	}
+	if previous.ClientLogins != current.ClientLogins {
+		r.logger.Info("clink", "发送 112 正式 MAIN 登录", logging.Int("count", current.ClientLogins))
+	}
+	if previous.LoginResponses != current.LoginResponses {
+		r.logger.Info("clink", "收到 136 正式 MAIN 登录响应",
+			logging.Int("count", current.LoginResponses),
+			logging.Int("result", int(current.LastLoginResult)),
+		)
+	}
+	if previous.AttachRequests != current.AttachRequests {
+		r.logger.Info("clink", "发送 104 attach channels", logging.Int("count", current.AttachRequests))
+	}
+	if previous.Heartbeats != current.Heartbeats && (current.Heartbeats == 1 || current.Heartbeats%12 == 0) {
+		r.logger.Info("clink", "发送正式会话 heartbeat", logging.Int("count", current.Heartbeats))
+	}
 	if previous.Points != current.Points {
 		r.logger.Info("points", "积分余额更新", logging.Int("points", current.Points))
 	}

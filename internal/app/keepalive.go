@@ -73,9 +73,13 @@ func (k *Keepalive) Run(ctx context.Context) error {
 		state.LastError = ""
 	})
 	worker := clink.NewWorker(clink.WorkerConfig{
-		Connection: connection,
-		UserID:     profile.UserID,
-		UserName:   profile.UserName,
+		Connection:        connection,
+		UserID:            profile.UserID,
+		UserName:          profile.UserName,
+		DeviceCode:        k.clinkAuth.client.Device().Code,
+		Mode:              clink.SessionModeFormal,
+		ReconnectInterval: 80 * time.Minute,
+		HeartbeatInterval: 5 * time.Second,
 	}, k.applyClinkSnapshot)
 	if err := worker.Run(ctx); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -125,6 +129,11 @@ func (k *Keepalive) applyClinkSnapshot(snapshot clink.Snapshot) {
 		state.REDQResponses = snapshot.REDQResponses
 		state.UserInfoRequests = snapshot.UserInfoRequests
 		state.UserInfoResponses = snapshot.UserInfoResponses
+		state.ClientLogins = snapshot.ClientLogins
+		state.LoginResponses = snapshot.LoginResponses
+		state.LastLoginResult = snapshot.LastLoginResult
+		state.AttachRequests = snapshot.AttachRequests
+		state.Heartbeats = snapshot.Heartbeats
 		switch snapshot.State {
 		case clink.StateResolving, clink.StateConnecting, clink.StateHandshaking:
 			state.Connection = ConnectionConnecting

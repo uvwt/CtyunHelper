@@ -16,11 +16,21 @@ import (
 
 const defaultOrigin = "https://pc.ctyun.cn"
 
+type SessionMode uint8
+
+const (
+	SessionModeKeepalive SessionMode = iota
+	SessionModeFormal
+)
+
 type WorkerConfig struct {
 	Connection        desktop.ConnectionInfo
 	UserID            int64
 	UserName          string
+	DeviceCode        string
+	Mode              SessionMode
 	ReconnectInterval time.Duration
+	HeartbeatInterval time.Duration
 	ErrorBackoff      time.Duration
 }
 
@@ -33,6 +43,9 @@ type Worker struct {
 func NewWorker(config WorkerConfig, notify func(Snapshot)) *Worker {
 	if config.ReconnectInterval <= 0 {
 		config.ReconnectInterval = 60 * time.Second
+	}
+	if config.HeartbeatInterval <= 0 {
+		config.HeartbeatInterval = 5 * time.Second
 	}
 	if config.ErrorBackoff <= 0 {
 		config.ErrorBackoff = 5 * time.Second
@@ -95,6 +108,9 @@ func (w *Worker) runCycle(ctx context.Context) error {
 	connection := w.config.Connection
 	if connection.DesktopID == 0 || connection.ClinkLVSOutHost == "" {
 		return fmt.Errorf("clink: 连接参数不完整")
+	}
+	if w.config.Mode == SessionModeFormal {
+		return w.runFormalCycle(ctx)
 	}
 	endpoint := url.URL{
 		Scheme: "wss",

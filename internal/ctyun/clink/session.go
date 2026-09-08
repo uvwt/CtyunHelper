@@ -14,6 +14,11 @@ type Snapshot struct {
 	REDQResponses     int
 	UserInfoRequests  int
 	UserInfoResponses int
+	ClientLogins      int
+	LoginResponses    int
+	LastLoginResult   uint32
+	AttachRequests    int
+	Heartbeats        int
 }
 
 type Session struct {

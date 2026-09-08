@@ -2,17 +2,19 @@ package desktop
 
 import "fmt"
 
-// ConnectionInfo 是 /api/desktop/client/connect 返回后建立当前 Clink 保活会话所需的数据。
-// 旧 CtYun 源码模型还包含 token/tenantMemberAccount 和一套 ToBuffer，但其实际
-// KeepAliveWorker 从未使用那条身份 Buffer；这里只保留当前 WebSocket 主线真实消费的字段。
+// ConnectionInfo 是 /api/desktop/client/connect 返回的 Clink 会话参数。
+// Token 与 TenantMemberAccount 在轻量 REDQ 保活里不会使用，但正式 MAIN 登录
+// 的 CLIENT_LOGIN_INFO(112) 会消费它们，因此必须保留在领域模型中。
 type ConnectionInfo struct {
-	DesktopID       uint32 `json:"desktopId"`
-	Host            string `json:"host"`
-	Port            string `json:"port"`
-	ClinkLVSOutHost string `json:"clinkLvsOutHost"`
-	CACert          string `json:"caCert"`
-	ClientCert      string `json:"clientCert"`
-	ClientKey       string `json:"clientKey"`
+	DesktopID           uint32 `json:"desktopId"`
+	Host                string `json:"host"`
+	Port                string `json:"port"`
+	ClinkLVSOutHost     string `json:"clinkLvsOutHost"`
+	CACert              string `json:"caCert"`
+	ClientCert          string `json:"clientCert"`
+	ClientKey           string `json:"clientKey"`
+	Token               string `json:"token"`
+	TenantMemberAccount string `json:"tenantMemberAccount"`
 }
 
 func (c ConnectionInfo) Validate() error {

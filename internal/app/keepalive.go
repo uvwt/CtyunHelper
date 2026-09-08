@@ -78,6 +78,7 @@ func (k *Keepalive) Run(ctx context.Context) error {
 		UserName:          profile.UserName,
 		DeviceCode:        k.clinkAuth.client.Device().Code,
 		Mode:              clink.SessionModeFormal,
+		FormalAppState:    clink.FormalAppStateBack,
 		ReconnectInterval: 80 * time.Minute,
 		HeartbeatInterval: 5 * time.Second,
 	}, k.applyClinkSnapshot)
@@ -132,6 +133,7 @@ func (k *Keepalive) applyClinkSnapshot(snapshot clink.Snapshot) {
 		state.ClientLogins = snapshot.ClientLogins
 		state.LoginResponses = snapshot.LoginResponses
 		state.LastLoginResult = snapshot.LastLoginResult
+		state.AppBackRequests = snapshot.AppBackRequests
 		state.AttachRequests = snapshot.AttachRequests
 		state.Heartbeats = snapshot.Heartbeats
 		switch snapshot.State {

@@ -80,7 +80,7 @@ func TestFormalWorkerLogsInAttachesAndHeartbeats(t *testing.T) {
 			t.Errorf("write 136: %v", err)
 			return
 		}
-		for _, want := range []uint16{msgMainAttach, msgMainClientVersion, msgHeartbeat} {
+		for _, want := range []uint16{msgMainAppBack, msgMainAttach, msgMainClientVersion, msgHeartbeat} {
 			_, raw, err := ws.ReadMessage()
 			if err != nil {
 				t.Errorf("read type %d: %v", want, err)
@@ -116,6 +116,7 @@ func TestFormalWorkerLogsInAttachesAndHeartbeats(t *testing.T) {
 		UserName:          "tester",
 		DeviceCode:        "device",
 		Mode:              SessionModeFormal,
+		FormalAppState:    FormalAppStateBack,
 		ReconnectInterval: 10 * time.Second,
 		HeartbeatInterval: 20 * time.Millisecond,
 		ErrorBackoff:      10 * time.Millisecond,
@@ -141,7 +142,7 @@ func TestFormalWorkerLogsInAttachesAndHeartbeats(t *testing.T) {
 		t.Fatal("formal worker did not stop")
 	}
 	snapshot := worker.Snapshot()
-	if snapshot.REDQChallenges != 1 || snapshot.REDQResponses != 1 || snapshot.UserInfoRequests != 1 || snapshot.UserInfoResponses != 1 || snapshot.ClientLogins != 1 || snapshot.LoginResponses != 1 || snapshot.LastLoginResult != 0 || snapshot.AttachRequests != 1 || snapshot.Heartbeats < 1 {
+	if snapshot.REDQChallenges != 1 || snapshot.REDQResponses != 1 || snapshot.UserInfoRequests != 1 || snapshot.UserInfoResponses != 1 || snapshot.ClientLogins != 1 || snapshot.LoginResponses != 1 || snapshot.LastLoginResult != 0 || snapshot.AppBackRequests != 1 || snapshot.AttachRequests != 1 || snapshot.Heartbeats < 1 {
 		t.Fatalf("formal counters=%#v", snapshot)
 	}
 }

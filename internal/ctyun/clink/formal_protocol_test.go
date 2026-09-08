@@ -43,6 +43,8 @@ func TestFormalControlMessagesUseRawFraming(t *testing.T) {
 		want uint16
 	}{
 		{name: "attach", buf: BuildAttachChannelsMessage(), want: msgMainAttach},
+		{name: "app back", buf: BuildAppBackMessage(), want: msgMainAppBack},
+		{name: "app front", buf: BuildAppFrontMessage(), want: msgMainAppFront},
 		{name: "client version", buf: BuildClientVersionMessage(), want: msgMainClientVersion},
 		{name: "heartbeat", buf: BuildHeartbeatMessage(), want: msgHeartbeat},
 	} {

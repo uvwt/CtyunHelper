@@ -7,6 +7,8 @@ import (
 
 const (
 	msgMainAttach        uint16 = 104
+	msgMainAppBack       uint16 = 113
+	msgMainAppFront      uint16 = 114
 	msgMainClientVersion uint16 = 116
 	msgMainClientLogin   uint16 = 112
 	msgMainLoginResponse uint16 = 136
@@ -45,6 +47,16 @@ func BuildClientLoginMessage(desktopID uint32, token, deviceCode, userAccount st
 
 func BuildAttachChannelsMessage() []byte {
 	return (Message{Type: msgMainAttach}).Marshal(false)
+}
+
+// BuildAppBackMessage 对齐官方 clink_main_client_app_status(channel, 0)：
+// 后台状态由 113 消息类型本身表达，没有额外 payload。
+func BuildAppBackMessage() []byte {
+	return (Message{Type: msgMainAppBack}).Marshal(false)
+}
+
+func BuildAppFrontMessage() []byte {
+	return (Message{Type: msgMainAppFront}).Marshal(false)
 }
 
 func BuildClientVersionMessage() []byte {

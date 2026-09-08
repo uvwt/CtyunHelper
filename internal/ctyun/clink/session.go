@@ -17,6 +17,8 @@ type Snapshot struct {
 	ClientLogins      int
 	LoginResponses    int
 	LastLoginResult   uint32
+	AppBackRequests   int
+	AppFrontRequests  int
 	AttachRequests    int
 	Heartbeats        int
 }

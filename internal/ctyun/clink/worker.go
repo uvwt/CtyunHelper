@@ -23,12 +23,21 @@ const (
 	SessionModeFormal
 )
 
+type FormalAppState uint8
+
+const (
+	FormalAppStateUnspecified FormalAppState = iota
+	FormalAppStateBack
+	FormalAppStateFront
+)
+
 type WorkerConfig struct {
 	Connection        desktop.ConnectionInfo
 	UserID            int64
 	UserName          string
 	DeviceCode        string
 	Mode              SessionMode
+	FormalAppState    FormalAppState
 	ReconnectInterval time.Duration
 	HeartbeatInterval time.Duration
 	ErrorBackoff      time.Duration

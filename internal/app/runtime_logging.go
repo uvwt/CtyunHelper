@@ -68,6 +68,9 @@ func (r *Runtime) logStateTransition(previous, current State) {
 			logging.Int("result", int(current.LastLoginResult)),
 		)
 	}
+	if previous.AppBackRequests != current.AppBackRequests {
+		r.logger.Info("clink", "发送 113 app status back", logging.Int("count", current.AppBackRequests))
+	}
 	if previous.AttachRequests != current.AttachRequests {
 		r.logger.Info("clink", "发送 104 attach channels", logging.Int("count", current.AttachRequests))
 	}

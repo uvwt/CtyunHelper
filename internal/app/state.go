@@ -47,6 +47,7 @@ type State struct {
 	ClientLogins      int
 	LoginResponses    int
 	LastLoginResult   uint32
+	AppBackRequests   int
 	AttachRequests    int
 	Heartbeats        int
 	Points            int

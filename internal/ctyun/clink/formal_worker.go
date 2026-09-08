@@ -189,6 +189,24 @@ func (w *Worker) runFormalCycleWithURL(ctx context.Context, endpoint string) err
 				}
 				loginAccepted = true
 				_ = ws.SetReadDeadline(time.Time{})
+				switch w.config.FormalAppState {
+				case FormalAppStateBack:
+					// 官方客户端把 MAIN 的应用后台态编码为独立的 113 空消息。
+					// 登录一旦被服务端接受就立即声明 back，尽量避免 Helper 成为前台会话 owner。
+					if err := write(websocket.BinaryMessage, BuildAppBackMessage()); err != nil {
+						return fmt.Errorf("clink: 发送 113 app status back: %w", err)
+					}
+					w.session.recordProtocolEvent(func(snapshot *Snapshot) {
+						snapshot.AppBackRequests++
+					})
+				case FormalAppStateFront:
+					if err := write(websocket.BinaryMessage, BuildAppFrontMessage()); err != nil {
+						return fmt.Errorf("clink: 发送 114 app status front: %w", err)
+					}
+					w.session.recordProtocolEvent(func(snapshot *Snapshot) {
+						snapshot.AppFrontRequests++
+					})
+				}
 				if err := write(websocket.BinaryMessage, BuildAttachChannelsMessage()); err != nil {
 					return fmt.Errorf("clink: 发送 104 attach channels: %w", err)
 				}

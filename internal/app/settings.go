@@ -13,18 +13,22 @@ type StartupControl interface {
 }
 
 type GeneralSettings struct {
-	AutomationEnabled bool
-	StartOnLogin      bool
+	AutomationEnabled        bool
+	StartOnLogin             bool
+	UsagePointsWindowEnabled bool
+	UsagePointsWindowStart   string
+	UsagePointsWindowEnd     string
 }
 
 type SettingsService struct {
-	paths   storage.Paths
-	startup StartupControl
-	model   *Model
+	paths        storage.Paths
+	startup      StartupControl
+	model        *Model
+	pointsPolicy *PointsSessionPolicy
 }
 
-func NewSettingsService(paths storage.Paths, startup StartupControl, model *Model) *SettingsService {
-	return &SettingsService{paths: paths, startup: startup, model: model}
+func NewSettingsService(paths storage.Paths, startup StartupControl, model *Model, pointsPolicy *PointsSessionPolicy) *SettingsService {
+	return &SettingsService{paths: paths, startup: startup, model: model, pointsPolicy: pointsPolicy}
 }
 
 func (s *SettingsService) Current() (GeneralSettings, error) {
@@ -40,8 +44,11 @@ func (s *SettingsService) Current() (GeneralSettings, error) {
 		return GeneralSettings{}, err
 	}
 	return GeneralSettings{
-		AutomationEnabled: config.Automation.Enabled,
-		StartOnLogin:      startOnLogin,
+		AutomationEnabled:        config.Automation.Enabled,
+		StartOnLogin:             startOnLogin,
+		UsagePointsWindowEnabled: config.Automation.UsagePointsWindow.Enabled,
+		UsagePointsWindowStart:   config.Automation.UsagePointsWindow.Start,
+		UsagePointsWindowEnd:     config.Automation.UsagePointsWindow.End,
 	}, nil
 }
 
@@ -50,6 +57,14 @@ func (s *SettingsService) Current() (GeneralSettings, error) {
 func (s *SettingsService) Save(settings GeneralSettings) error {
 	if s == nil || s.startup == nil || s.model == nil {
 		return fmt.Errorf("app: 通用设置服务未初始化")
+	}
+	window, err := normalizeUsagePointsWindow(UsagePointsWindow{
+		Enabled: settings.UsagePointsWindowEnabled,
+		Start:   settings.UsagePointsWindowStart,
+		End:     settings.UsagePointsWindowEnd,
+	})
+	if err != nil {
+		return err
 	}
 	config, err := storage.LoadConfig(s.paths)
 	if err != nil {
@@ -67,6 +82,11 @@ func (s *SettingsService) Save(settings GeneralSettings) error {
 	}
 
 	config.Automation.Enabled = settings.AutomationEnabled
+	config.Automation.UsagePointsWindow = storage.UsagePointsWindowConfig{
+		Enabled: window.Enabled,
+		Start:   window.Start,
+		End:     window.End,
+	}
 	if err := storage.SaveConfig(s.paths, config); err != nil {
 		if startupChanged {
 			if rollbackErr := s.startup.SetEnabled(previousStartup); rollbackErr != nil {
@@ -79,5 +99,8 @@ func (s *SettingsService) Save(settings GeneralSettings) error {
 	s.model.Update(func(state *State) {
 		state.AutomationPaused = !settings.AutomationEnabled
 	})
+	if err := s.pointsPolicy.Update(window); err != nil {
+		return fmt.Errorf("app: 更新刷积分时间段: %w", err)
+	}
 	return nil
 }

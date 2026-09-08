@@ -54,6 +54,7 @@ func newKeepaliveForTest(primary *auth.Client, desktops desktopService, model *M
 		clinkAuth:   newClinkAuthFlow(clinkClient, store, nil),
 		desktops:    desktops,
 		model:       model,
+		now:         time.Now,
 	}
 }
 

@@ -20,18 +20,22 @@ type desktopService interface {
 // Keepalive 将主登录态、Clink 专用登录态、云电脑发现/connect 与 Worker 串成一条长期主链。
 // 现代 Profile 只决定当前账号是否可运行；真正的 Clink 请求始终使用独立 legacy Profile。
 type Keepalive struct {
-	primaryAuth *auth.Client
-	clinkAuth   *clinkAuthFlow
-	desktops    desktopService
-	model       *Model
+	primaryAuth  *auth.Client
+	clinkAuth    *clinkAuthFlow
+	desktops     desktopService
+	model        *Model
+	pointsPolicy *PointsSessionPolicy
+	now          func() time.Time
 }
 
-func NewKeepalive(primaryAuth, clinkClient *auth.Client, desktops *desktop.Client, store clinkAuthStore, guard *automation.Guard, model *Model) *Keepalive {
+func NewKeepalive(primaryAuth, clinkClient *auth.Client, desktops *desktop.Client, store clinkAuthStore, guard *automation.Guard, model *Model, pointsPolicy *PointsSessionPolicy) *Keepalive {
 	return &Keepalive{
-		primaryAuth: primaryAuth,
-		clinkAuth:   newClinkAuthFlow(clinkClient, store, guard),
-		desktops:    desktops,
-		model:       model,
+		primaryAuth:  primaryAuth,
+		clinkAuth:    newClinkAuthFlow(clinkClient, store, guard),
+		desktops:     desktops,
+		model:        model,
+		pointsPolicy: pointsPolicy,
+		now:          time.Now,
 	}
 }
 
@@ -50,40 +54,46 @@ func (k *Keepalive) Run(ctx context.Context) error {
 		return k.failClinkAuth(err)
 	}
 
-	selected, connection, err := k.resolveClinkConnection(ctx)
-	if auth.RequiresAuthentication(err) {
-		// 40010 只表示 Clink legacy Profile 已失效。它不能反向清理现代 Profile，
-		// 否则两代认证态会再次互相污染。清掉独立缓存后只刷新一次并重试整条路由发现。
-		if invalidateErr := k.clinkAuth.invalidate(); invalidateErr != nil {
-			return k.failClinkAuth(invalidateErr)
+	for {
+		selected, connection, routeErr := k.resolveClinkConnection(ctx)
+		if auth.RequiresAuthentication(routeErr) {
+			// 40010 只表示 Clink legacy Profile 已失效。它不能反向清理现代 Profile，
+			// 否则两代认证态会再次互相污染。清掉独立缓存后只刷新一次并重试整条路由发现。
+			if invalidateErr := k.clinkAuth.invalidate(); invalidateErr != nil {
+				return k.failClinkAuth(invalidateErr)
+			}
+			profile, err = k.clinkAuth.refresh(ctx, account)
+			if err != nil {
+				return k.failClinkAuth(err)
+			}
+			selected, connection, routeErr = k.resolveClinkConnection(ctx)
 		}
-		profile, err = k.clinkAuth.refresh(ctx, account)
-		if err != nil {
-			return k.failClinkAuth(err)
+		if routeErr != nil {
+			return k.failClinkProtocol(routeErr)
 		}
-		selected, connection, err = k.resolveClinkConnection(ctx)
-	}
-	if err != nil {
-		return k.failClinkProtocol(err)
-	}
-	k.model.Update(func(state *State) {
-		state.DesktopID = selected.ID()
-		state.DesktopName = selected.Name()
-		state.Connection = ConnectionConnecting
-		state.LastError = ""
-	})
-	worker := clink.NewWorker(clink.WorkerConfig{
-		Connection:        connection,
-		UserID:            profile.UserID,
-		UserName:          profile.UserName,
-		DeviceCode:        k.clinkAuth.client.Device().Code,
-		Mode:              clink.SessionModeFormal,
-		FormalAppState:    clink.FormalAppStateBack,
-		ReconnectInterval: 80 * time.Minute,
-		HeartbeatInterval: 5 * time.Second,
-	}, k.applyClinkSnapshot)
-	if err := worker.Run(ctx); err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+
+		k.model.Update(func(state *State) {
+			state.DesktopID = selected.ID()
+			state.DesktopName = selected.Name()
+			state.Connection = ConnectionConnecting
+			state.LastError = ""
+		})
+
+		now := k.now()
+		mode, reconnectInterval := k.sessionMode(now)
+		worker := clink.NewWorker(clink.WorkerConfig{
+			Connection:        connection,
+			UserID:            profile.UserID,
+			UserName:          profile.UserName,
+			DeviceCode:        k.clinkAuth.client.Device().Code,
+			Mode:              mode,
+			FormalAppState:    clink.FormalAppStateBack,
+			ReconnectInterval: reconnectInterval,
+			HeartbeatInterval: 5 * time.Second,
+		}, k.applyClinkSnapshot)
+
+		switched, runErr := k.runWorkerUntilPolicyChange(ctx, worker, now)
+		if ctx.Err() != nil || (errors.Is(runErr, context.Canceled) && !switched) {
 			k.model.Update(func(state *State) {
 				state.Connection = ConnectionStopped
 				state.OnlineSince = time.Time{}
@@ -91,10 +101,59 @@ func (k *Keepalive) Run(ctx context.Context) error {
 			})
 			return nil
 		}
-		k.setError(ConnectionBackoff, err.Error())
-		return err
+		if switched {
+			continue
+		}
+		if runErr != nil {
+			k.setError(ConnectionBackoff, runErr.Error())
+			return runErr
+		}
+		return nil
 	}
-	return nil
+}
+
+func (k *Keepalive) sessionMode(now time.Time) (clink.SessionMode, time.Duration) {
+	if k.pointsPolicy != nil && k.pointsPolicy.FormalAt(now) {
+		return clink.SessionModeFormal, 80 * time.Minute
+	}
+	return clink.SessionModeKeepalive, 60 * time.Second
+}
+
+func (k *Keepalive) runWorkerUntilPolicyChange(ctx context.Context, worker *clink.Worker, now time.Time) (bool, error) {
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(workerCtx) }()
+
+	var timer *time.Timer
+	var timerC <-chan time.Time
+	if k.pointsPolicy != nil {
+		if boundary := k.pointsPolicy.NextBoundary(now); !boundary.IsZero() {
+			timer = time.NewTimer(boundary.Sub(now))
+			timerC = timer.C
+			defer timer.Stop()
+		}
+	}
+	changeC := k.pointsPolicy.Changes()
+
+	stopWorker := func() error {
+		cancel()
+		return <-done
+	}
+
+	select {
+	case err := <-done:
+		return false, err
+	case <-ctx.Done():
+		_ = stopWorker()
+		return false, ctx.Err()
+	case <-changeC:
+		_ = stopWorker()
+		return true, nil
+	case <-timerC:
+		_ = stopWorker()
+		return true, nil
+	}
 }
 
 func (k *Keepalive) resolveClinkConnection(ctx context.Context) (desktop.Desktop, desktop.ConnectionInfo, error) {

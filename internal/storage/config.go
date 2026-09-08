@@ -29,7 +29,14 @@ type DeviceConfig struct {
 }
 
 type AutomationConfig struct {
-	Enabled bool `json:"enabled"`
+	Enabled           bool                    `json:"enabled"`
+	UsagePointsWindow UsagePointsWindowConfig `json:"usagePointsWindow"`
+}
+
+type UsagePointsWindowConfig struct {
+	Enabled bool   `json:"enabled"`
+	Start   string `json:"start"`
+	End     string `json:"end"`
 }
 
 // RedeemConfig 只描述用户明确选择的兑换计划。默认关闭；程序不会根据
@@ -59,7 +66,14 @@ type SafetyConfig struct {
 
 func DefaultConfig() Config {
 	return Config{
-		Automation: AutomationConfig{Enabled: true},
+		Automation: AutomationConfig{
+			Enabled: true,
+			UsagePointsWindow: UsagePointsWindowConfig{
+				Enabled: false,
+				Start:   "04:00",
+				End:     "07:00",
+			},
+		},
 		Redeem: RedeemConfig{
 			Enabled: false, ScheduleType: "daily", IntervalDays: 1,
 		},

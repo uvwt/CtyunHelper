@@ -10,6 +10,7 @@ import (
 	"github.com/tailscale/walk"
 	d "github.com/tailscale/walk/declarative"
 	"github.com/uvwt/CtyunHelper/internal/app"
+	"github.com/uvwt/CtyunHelper/internal/logging"
 	"golang.org/x/sys/windows"
 )
 
@@ -90,7 +91,10 @@ func Run(buildRuntime func() (*app.Runtime, error), options RunOptions) error {
 
 	events, unsubscribe := view.model.Events().Subscribe(64)
 	defer unsubscribe()
-	go view.observe(ctx, events)
+	go func() {
+		defer logging.RecoverPanic("winui.state_observer")
+		view.observe(ctx, events)
+	}()
 
 	view.applyState(view.model.Snapshot())
 	if !options.StartHidden {
@@ -313,7 +317,10 @@ func (v *walkMainView) observe(ctx context.Context, events <-chan app.Event) {
 			if !ok {
 				continue
 			}
-			walk.App().Synchronize(func() { v.applyState(state) })
+			walk.App().Synchronize(func() {
+				defer logging.RecoverPanic("winui.state_apply")
+				v.applyState(state)
+			})
 		}
 	}
 }
@@ -406,8 +413,10 @@ func setWalkStatus(label *walk.TextLabel, text string, color uint32) {
 
 func (v *walkMainView) runTask(name string, fn func() error) {
 	go func() {
+		defer logging.RecoverPanic("winui.task")
 		if err := fn(); err != nil {
 			walk.App().Synchronize(func() {
+				defer logging.RecoverPanic("winui.task_ui")
 				walk.MsgBox(v.window, name, err.Error(), walk.MsgBoxIconError|walk.MsgBoxOK)
 			})
 		}
@@ -416,6 +425,7 @@ func (v *walkMainView) runTask(name string, fn func() error) {
 
 func (v *walkMainView) showMainWindow() {
 	walk.App().Synchronize(func() {
+		defer logging.RecoverPanic("winui.show_main")
 		v.window.Show()
 		_ = v.window.Activate()
 	})
@@ -423,12 +433,17 @@ func (v *walkMainView) showMainWindow() {
 
 func (v *walkMainView) logout() {
 	walk.App().Synchronize(func() {
+		defer logging.RecoverPanic("winui.logout_ui")
 		if walk.MsgBox(v.window, "退出账号", "确定退出当前账号并清除本地登录凭据吗？", walk.MsgBoxIconQuestion|walk.MsgBoxYesNo) != walk.DlgCmdYes {
 			return
 		}
 		go func() {
+			defer logging.RecoverPanic("winui.logout")
 			if err := v.runtime.Logout(); err != nil {
-				walk.App().Synchronize(func() { walk.MsgBox(v.window, "退出账号", err.Error(), walk.MsgBoxIconError|walk.MsgBoxOK) })
+				walk.App().Synchronize(func() {
+					defer logging.RecoverPanic("winui.logout_error_ui")
+					walk.MsgBox(v.window, "退出账号", err.Error(), walk.MsgBoxIconError|walk.MsgBoxOK)
+				})
 			}
 		}()
 	})
@@ -436,6 +451,7 @@ func (v *walkMainView) logout() {
 
 func (v *walkMainView) quit() {
 	walk.App().Synchronize(func() {
+		defer logging.RecoverPanic("winui.quit")
 		v.mu.Lock()
 		v.quitting = true
 		v.mu.Unlock()

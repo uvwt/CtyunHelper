@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/uvwt/CtyunHelper/internal/logging"
 )
 
 var ErrJobAlreadyRunning = errors.New("automation: job 已在运行")
@@ -105,7 +108,10 @@ func (s *Scheduler) Start(ctx context.Context) {
 	s.mu.Unlock()
 
 	for _, job := range jobs {
-		go s.runSchedule(ctx, job)
+		go func(job *scheduledJob) {
+			defer logging.RecoverPanic("automation.scheduler." + job.config.Name)
+			s.runSchedule(ctx, job)
+		}(job)
 	}
 }
 
@@ -182,7 +188,7 @@ func (s *Scheduler) runJob(ctx context.Context, job *scheduledJob, now time.Time
 	job.mu.Unlock()
 	s.publish(runningState)
 
-	err := run(ctx)
+	err := runJobAttempt(ctx, job.config.Name, run)
 	finishedState := job.update(func(state *JobState) {
 		state.Running = false
 		if err != nil {
@@ -191,6 +197,16 @@ func (s *Scheduler) runJob(ctx context.Context, job *scheduledJob, now time.Time
 	})
 	s.publish(finishedState)
 	return err
+}
+
+func runJobAttempt(ctx context.Context, name string, run func(context.Context) error) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			logging.RecordPanic("automation."+name, recovered, debug.Stack())
+			err = fmt.Errorf("automation: Job %s panic: %v", name, recovered)
+		}
+	}()
+	return run(ctx)
 }
 
 func (j *scheduledJob) update(update func(*JobState)) JobState {

@@ -10,6 +10,7 @@ import (
 	"github.com/tailscale/walk"
 	d "github.com/tailscale/walk/declarative"
 	"github.com/uvwt/CtyunHelper/internal/ctyun/auth"
+	"github.com/uvwt/CtyunHelper/internal/logging"
 )
 
 func (v *walkMainView) openLogin() {
@@ -57,10 +58,12 @@ func (v *walkMainView) openLogin() {
 		accountEdit.SetEnabled(false)
 		passwordEdit.SetEnabled(false)
 		go func(account string) {
+			defer logging.RecoverPanic("winui.login_captcha")
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			captcha, err := v.runtime.BeginLoginCaptcha(ctx, account)
 			walk.App().Synchronize(func() {
+				defer logging.RecoverPanic("winui.login_captcha_ui")
 				setBusy(false)
 				if err != nil {
 					walk.MsgBox(dlg, "验证码", err.Error(), walk.MsgBoxIconError|walk.MsgBoxOK)
@@ -104,10 +107,12 @@ func (v *walkMainView) openLogin() {
 		setBusy(true)
 		_ = noteLabel.SetText("正在登录…")
 		go func(account, password, captchaCode, captchaKey string) {
+			defer logging.RecoverPanic("winui.login")
 			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 			defer cancel()
 			profile, err := v.runtime.CompleteLogin(ctx, account, password, captchaCode, captchaKey)
 			walk.App().Synchronize(func() {
+				defer logging.RecoverPanic("winui.login_ui")
 				setBusy(false)
 				if err != nil {
 					if auth.RequiresLoginCaptcha(err) {
@@ -221,10 +226,12 @@ func (v *walkMainView) openBinding() {
 		setBusy(true)
 		_ = mobileLabel.SetText("正在获取设备验证码…")
 		go func() {
+			defer logging.RecoverPanic("winui.device_challenge")
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			challenge, err := v.runtime.BeginDeviceBinding(ctx)
 			walk.App().Synchronize(func() {
+				defer logging.RecoverPanic("winui.device_challenge_ui")
 				setBusy(false)
 				if err != nil {
 					walk.MsgBox(dlg, "设备绑定", err.Error(), walk.MsgBoxIconError|walk.MsgBoxOK)
@@ -250,10 +257,12 @@ func (v *walkMainView) openBinding() {
 		}
 		setBusy(true)
 		go func(code, key string) {
+			defer logging.RecoverPanic("winui.device_sms")
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			newSMSKey, err := v.runtime.SendDeviceSMS(ctx, code, key)
 			walk.App().Synchronize(func() {
+				defer logging.RecoverPanic("winui.device_sms_ui")
 				setBusy(false)
 				if err != nil {
 					walk.MsgBox(dlg, "发送短信失败", err.Error(), walk.MsgBoxIconError|walk.MsgBoxOK)
@@ -277,10 +286,12 @@ func (v *walkMainView) openBinding() {
 		}
 		setBusy(true)
 		go func(code, key string) {
+			defer logging.RecoverPanic("winui.device_binding")
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			err := v.runtime.CompleteDeviceBinding(ctx, code, key)
 			walk.App().Synchronize(func() {
+				defer logging.RecoverPanic("winui.device_binding_ui")
 				setBusy(false)
 				if err != nil {
 					walk.MsgBox(dlg, "设备绑定失败", err.Error(), walk.MsgBoxIconError|walk.MsgBoxOK)

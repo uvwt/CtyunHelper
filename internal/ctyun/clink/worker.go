@@ -11,6 +11,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/uvwt/CtyunHelper/internal/ctyun/desktop"
+	"github.com/uvwt/CtyunHelper/internal/logging"
 )
 
 const defaultOrigin = "https://pc.ctyun.cn"
@@ -153,6 +154,7 @@ func (w *Worker) runCycleWithURL(ctx context.Context, endpoint string) error {
 	defer cancel()
 	closed := make(chan struct{})
 	go func() {
+		defer logging.RecoverPanic("clink.cycle_closer")
 		select {
 		case <-cycleCtx.Done():
 			_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "cycle reset"), time.Now().Add(time.Second))

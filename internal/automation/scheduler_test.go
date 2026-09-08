@@ -3,6 +3,7 @@ package automation
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -73,6 +74,25 @@ func TestSchedulerStoresLastError(t *testing.T) {
 	}
 	state, _ := scheduler.State("points")
 	if state.Running || state.LastError != "failed" {
+		t.Fatalf("state = %#v", state)
+	}
+}
+
+func TestSchedulerConvertsPanicToJobError(t *testing.T) {
+	scheduler := NewScheduler(SchedulerOptions{Now: time.Now})
+	if err := scheduler.Register(JobConfig{
+		Name:  "points",
+		Times: []ClockTime{{Hour: 4}},
+		Run:   func(context.Context) error { panic("job exploded") },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err := scheduler.RunNow(context.Background(), "points")
+	if err == nil || !strings.Contains(err.Error(), "Job points panic: job exploded") {
+		t.Fatalf("RunNow() error = %v", err)
+	}
+	state, _ := scheduler.State("points")
+	if state.Running || !strings.Contains(state.LastError, "Job points panic: job exploded") {
 		t.Fatalf("state = %#v", state)
 	}
 }

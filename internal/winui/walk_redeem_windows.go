@@ -13,6 +13,7 @@ import (
 	d "github.com/tailscale/walk/declarative"
 	"github.com/uvwt/CtyunHelper/internal/app"
 	"github.com/uvwt/CtyunHelper/internal/automation"
+	"github.com/uvwt/CtyunHelper/internal/logging"
 )
 
 func (v *walkMainView) openRedeemSettings() {
@@ -78,10 +79,12 @@ func (v *walkMainView) openRedeemSettings() {
 		setBusy(true)
 		_ = statusLabel.SetText("正在加载可绑定云电脑和兑换商品…")
 		go func() {
+			defer logging.RecoverPanic("winui.redeem_catalog")
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
 			newCatalog, err := v.runtime.LoadRedeemCatalog(ctx)
 			walk.App().Synchronize(func() {
+				defer logging.RecoverPanic("winui.redeem_catalog_ui")
 				setBusy(false)
 				if err != nil {
 					catalogLoaded = false
@@ -150,10 +153,12 @@ func (v *walkMainView) openRedeemSettings() {
 		setBusy(true)
 		_ = statusLabel.SetText("正在保存兑换设置…")
 		go func(request app.SaveRedeemSettingsRequest) {
+			defer logging.RecoverPanic("winui.redeem_save")
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
 			err := v.runtime.SaveRedeemSettings(ctx, request)
 			walk.App().Synchronize(func() {
+				defer logging.RecoverPanic("winui.redeem_save_ui")
 				setBusy(false)
 				if err != nil {
 					_ = statusLabel.SetText("保存失败。")

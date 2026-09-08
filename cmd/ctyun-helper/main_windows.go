@@ -20,6 +20,17 @@ import (
 )
 
 func main() {
+	var crashOutput *os.File
+	if paths, err := storage.ResolvePaths(); err == nil {
+		// Crash 日志只用于诊断；即使文件不可写，也不能阻止保活程序本身启动。
+		if output, redirectErr := logging.RedirectCrashOutput(filepath.Join(paths.LogDir, "CtyunHelper-crash.log")); redirectErr == nil {
+			crashOutput = output
+		}
+	}
+	if crashOutput != nil {
+		defer crashOutput.Close()
+	}
+	defer logging.RecoverPanic("main")
 	if err := run(); err != nil {
 		winui.ShowError("CtyunHelper", err.Error())
 	}

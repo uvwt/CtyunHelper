@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -187,7 +188,10 @@ func (r *Runtime) Start(parent context.Context) {
 	r.mu.Unlock()
 	if r.logger != nil && r.model != nil {
 		events, unsubscribe := r.model.Events().Subscribe(64)
-		go r.observeState(rootCtx, r.model.Snapshot(), events, unsubscribe)
+		go func() {
+			defer logging.RecoverPanic("app.state_observer")
+			r.observeState(rootCtx, r.model.Snapshot(), events, unsubscribe)
+		}()
 		r.logger.Info("app", "Runtime 启动")
 	}
 	if r.automation != nil {
@@ -247,7 +251,7 @@ func (r *Runtime) runSession(ctx context.Context, done chan struct{}) {
 		close(done)
 	}()
 	for {
-		err := r.session.Run(ctx)
+		err := r.runSessionAttempt(ctx)
 		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 			return
 		}
@@ -267,6 +271,16 @@ func (r *Runtime) runSession(ctx context.Context, done chan struct{}) {
 		case <-timer.C:
 		}
 	}
+}
+
+func (r *Runtime) runSessionAttempt(ctx context.Context) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			logging.RecordPanic("app.keepalive_session", recovered, debug.Stack())
+			err = fmt.Errorf("app: 保活会话 panic: %v", recovered)
+		}
+	}()
+	return r.session.Run(ctx)
 }
 
 func (r *Runtime) Restore(account string) (bool, error) {

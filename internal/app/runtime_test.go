@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,6 +24,40 @@ func (s *blockingSession) Run(ctx context.Context) error {
 	s.starts.Add(1)
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+type panicSession struct{}
+
+func (panicSession) Run(context.Context) error {
+	panic("session exploded")
+}
+
+func TestRuntimeSessionPanicBecomesRetryableError(t *testing.T) {
+	crashLog, err := os.CreateTemp(t.TempDir(), "runtime-panic-*.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer crashLog.Close()
+	previousStderr := os.Stderr
+	os.Stderr = crashLog
+	defer func() { os.Stderr = previousStderr }()
+
+	runtime := &Runtime{session: panicSession{}}
+	err = runtime.runSessionAttempt(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "保活会话 panic: session exploded") {
+		t.Fatalf("runSessionAttempt() error = %v", err)
+	}
+	if err := crashLog.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(crashLog.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(content)
+	if !strings.Contains(text, "PANIC app.keepalive_session session exploded") || !strings.Contains(text, "panicSession.Run") {
+		t.Fatalf("crash log missing panic context:\n%s", text)
+	}
 }
 
 type switchingSession struct {

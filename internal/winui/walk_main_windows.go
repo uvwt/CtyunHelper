@@ -190,8 +190,8 @@ func (v *walkMainView) create() error {
 					d.PushButton{AssignTo: &v.loginButton, Text: "账号登录", OnClicked: v.openLogin},
 					d.PushButton{AssignTo: &v.bindButton, Text: "绑定设备", OnClicked: v.openBinding},
 					d.PushButton{AssignTo: &v.aiButton, Text: "执行 AI 任务", OnClicked: func() { v.runTask("AI 任务", v.runtime.RunAITask) }},
-					d.PushButton{AssignTo: &v.pointsButton, Text: "刷新积分", OnClicked: func() { v.runTask("刷新积分", v.runtime.RunPointsTask) }},
 					d.PushButton{AssignTo: &v.redeemButton, Text: "检查兑换", OnClicked: func() { v.runTask("检查兑换", v.runtime.RunRedeemTask) }},
+					d.PushButton{AssignTo: &v.pointsButton, Text: "刷新状态", OnClicked: func() { v.runTask("刷新状态", v.runtime.RunPointsTask) }},
 					d.PushButton{AssignTo: &v.redeemSettingsButton, Text: "兑换设置", OnClicked: v.openRedeemSettings},
 					d.PushButton{AssignTo: &v.settingsButton, Text: "设置", OnClicked: v.openSettings},
 					d.PushButton{AssignTo: &v.logsButton, Text: "日志", OnClicked: v.openLogs},
@@ -257,7 +257,7 @@ func (v *walkMainView) createTray() error {
 	if err := add("执行 AI 任务", func() { v.runTask("AI 任务", v.runtime.RunAITask) }); err != nil {
 		return err
 	}
-	if err := add("刷新积分", func() { v.runTask("刷新积分", v.runtime.RunPointsTask) }); err != nil {
+	if err := add("刷新状态", func() { v.runTask("刷新状态", v.runtime.RunPointsTask) }); err != nil {
 		return err
 	}
 	if err := add("检查兑换", func() { v.runTask("检查兑换", v.runtime.RunRedeemTask) }); err != nil {

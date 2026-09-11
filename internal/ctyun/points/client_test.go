@@ -88,3 +88,21 @@ func TestGeneralPointsUsesPointsFieldFromRealResponseShape(t *testing.T) {
 		t.Fatalf("points = %d", points)
 	}
 }
+
+func TestPointsAPIErrorPreservesAuthenticationClassification(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": auth.CodeNoPermissions,
+			"msg":  "当前登录信息已过期，请重新登录",
+		})
+	}))
+	defer server.Close()
+
+	authClient := auth.NewClient(auth.DeviceIdentity{Code: "device"}, auth.ClientOptions{Random: strings.NewReader(strings.Repeat("z", 512))})
+	authClient.UseProfile(auth.Profile{UserID: 1, UserEID: "e", TenantID: 2, SecretKey: "s", CommonLoginReqHeader: "c"})
+	client := NewClient(authClient, ClientOptions{Origin: server.URL})
+	_, err := client.Tasks(context.Background())
+	if err == nil || !auth.RequiresAuthentication(err) {
+		t.Fatalf("Tasks() error = %v, want classified 40010", err)
+	}
+}

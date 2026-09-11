@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/uvwt/CtyunHelper/internal/automation"
@@ -29,6 +31,10 @@ type AuthFlow struct {
 	store  accountStore
 	model  *Model
 	guard  *automation.Guard
+
+	recoveryMu               sync.Mutex
+	profileRevision          atomic.Uint64
+	pendingLoginClaimAccount string
 }
 
 func NewAuthFlow(client *auth.Client, store accountStore, model *Model, guard *automation.Guard) *AuthFlow {
@@ -49,7 +55,7 @@ func (f *AuthFlow) Restore(account string) (bool, error) {
 		f.requireLogin(err.Error())
 		return false, err
 	}
-	f.client.UseProfile(profile)
+	f.useProfile(profile)
 	f.model.Update(func(state *State) {
 		state.Account = account
 		state.LoginAITask = PointsTaskStatus{}
@@ -90,7 +96,8 @@ func (f *AuthFlow) CompleteLogin(ctx context.Context, account, password, captcha
 	}
 	// 一次交互式登录流程只在最初的账号密码提交时占用一次登录额度。
 	// 服务端要求验证码后的续步仍属于同一流程，不应重复消耗每日额度。
-	if f.guard != nil && captchaCode == "" {
+	reuseClaim := captchaCode == "" && f.consumePendingLoginClaim(account)
+	if f.guard != nil && captchaCode == "" && !reuseClaim {
 		if err := f.guard.Claim(automation.ActionLogin); err != nil {
 			wrapped := fmt.Errorf("app: 登录被保守策略阻止: %w", err)
 			f.setLoginError(wrapped)
@@ -134,7 +141,8 @@ func (f *AuthFlow) CompleteLogin(ctx context.Context, account, password, captcha
 }
 
 func (f *AuthFlow) CommitLogin(account string, profile auth.Profile) {
-	f.client.UseProfile(profile)
+	f.clearPendingLoginClaim()
+	f.useProfile(profile)
 	f.model.Update(func(state *State) {
 		state.Account = account
 		state.LoginAITask = PointsTaskStatus{}
@@ -188,7 +196,7 @@ func (f *AuthFlow) CompleteDeviceBinding(ctx context.Context, smsCode, smsKey st
 		f.setAuthError(err)
 		return fmt.Errorf("app: 保存绑定后的 Profile: %w", err)
 	}
-	f.client.UseProfile(profile)
+	f.useProfile(profile)
 	f.model.Update(func(state *State) {
 		state.Connection = ConnectionStopped
 		state.LastError = ""
@@ -208,7 +216,7 @@ func (f *AuthFlow) HandleSessionError(err error) error {
 	if !auth.RequiresAuthentication(err) {
 		return nil
 	}
-	f.client.ClearProfile()
+	f.clearProfile()
 	if deleteErr := f.store.DeleteProfile(); deleteErr != nil {
 		return fmt.Errorf("app: 清理失效 Profile: %w", deleteErr)
 	}
@@ -217,7 +225,8 @@ func (f *AuthFlow) HandleSessionError(err error) error {
 }
 
 func (f *AuthFlow) Logout() error {
-	f.client.ClearProfile()
+	f.clearPendingLoginClaim()
+	f.clearProfile()
 	cleanupErr := errors.Join(
 		f.store.DeleteProfile(),
 		f.store.DeleteClinkProfile(),

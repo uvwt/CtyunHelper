@@ -72,7 +72,7 @@ func buildRuntime() (*app.Runtime, error) {
 	})
 	accountStore := storage.NewAccountStore(paths)
 	desktopClient := desktop.NewClient(clinkAuthClient, desktop.ClientOptions{})
-	pointsClient := points.NewClient(authClient, points.ClientOptions{})
+	rawPointsClient := points.NewClient(authClient, points.ClientOptions{})
 	eaiClient, err := eai.NewClient(authClient, eai.ClientOptions{})
 	if err != nil {
 		return nil, err
@@ -107,6 +107,7 @@ func buildRuntime() (*app.Runtime, error) {
 	}
 	keepalive := app.NewKeepalive(authClient, clinkAuthClient, desktopClient, accountStore, guard, model, pointsPolicy)
 	authFlow := app.NewAuthFlow(authClient, accountStore, model, guard)
+	pointsClient := app.NewRecoveringPointsClient(rawPointsClient, authFlow)
 	aiJob := automation.NewAIJob(pointsClient, eaiClient, guard, "你好")
 	pointsJob := automation.NewPointsJob(pointsClient, automation.PointsJobOptions{})
 	redeemPlan := automation.RedeemPlan{

@@ -201,3 +201,164 @@ func TestAuthFlowCaptchaContinuationReusesInitialLoginQuota(t *testing.T) {
 		t.Fatalf("captcha continuation must reuse initial login quota: %#v", state)
 	}
 }
+
+func TestAuthFlowRecoversExpiredProfileWithStoredLoginOnce(t *testing.T) {
+	var loginCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/auth/client/genChallengeData":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"challengeId": "challenge", "challengeCode": "salt"}})
+		case "/api/auth/client/login":
+			loginCalls.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{
+				"userId": 2, "userEid": "new-eid", "tenantId": 3,
+				"secretKey": "new-key", "commonLoginReqHeader": "new-common", "bondedDevice": true,
+			}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	oldProfile := auth.Profile{UserID: 1, UserEID: "old-eid", TenantID: 2, SecretKey: "old-key", CommonLoginReqHeader: "old-common", BondedDevice: true}
+	store := &memoryAccountStore{account: "account", password: "password", profile: oldProfile, profileExists: true}
+	client := auth.NewClient(auth.DeviceIdentity{Code: "ctyun_fixed"}, auth.ClientOptions{APIOrigin: server.URL, HTTPClient: server.Client()})
+	model := NewModel(State{})
+	guard := automation.NewGuard(automation.DefaultPolicy(), automation.SafetyState{}, automation.GuardOptions{Now: time.Now})
+	flow := NewAuthFlow(client, store, model, guard)
+	if restored, err := flow.Restore("account"); err != nil || !restored {
+		t.Fatalf("Restore() restored=%v err=%v", restored, err)
+	}
+	model.Update(func(state *State) { state.Connection = ConnectionOnline })
+	failedRevision := flow.currentProfileRevision()
+
+	if err := flow.RecoverExpiredProfile(context.Background(), failedRevision); err != nil {
+		t.Fatal(err)
+	}
+	profile, ok := client.Profile()
+	if !ok || profile.UserID != 2 || store.profile.UserID != 2 || !store.profileExists {
+		t.Fatalf("recovered profile client=%#v ok=%v store=%#v exists=%v", profile, ok, store.profile, store.profileExists)
+	}
+	if state := model.Snapshot(); state.Connection != ConnectionOnline || state.LastError != "" {
+		t.Fatalf("recovery changed healthy connection state: %#v", state)
+	}
+	if loginCalls.Load() != 1 || guard.Snapshot().DailyActions[automation.ActionLogin] != 1 {
+		t.Fatalf("login calls=%d safety=%#v", loginCalls.Load(), guard.Snapshot())
+	}
+
+	// 同一批并发失败携带旧 revision 时，第二个恢复请求只能复用新 Profile。
+	if err := flow.RecoverExpiredProfile(context.Background(), failedRevision); err != nil {
+		t.Fatal(err)
+	}
+	if loginCalls.Load() != 1 {
+		t.Fatalf("deduplicated recovery login calls = %d, want 1", loginCalls.Load())
+	}
+}
+
+func TestAuthFlowExpiredProfileCaptchaFallsBackToInteractiveLogin(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/auth/client/genChallengeData":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"challengeId": "challenge", "challengeCode": "salt"}})
+		case "/api/auth/client/login":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": auth.CodeNeedCaptcha, "msg": "captcha required"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	oldProfile := auth.Profile{UserID: 1, UserEID: "old-eid", TenantID: 2, SecretKey: "old-key", CommonLoginReqHeader: "old-common", BondedDevice: true}
+	store := &memoryAccountStore{account: "account", password: "password", profile: oldProfile, profileExists: true}
+	client := auth.NewClient(auth.DeviceIdentity{Code: "ctyun_fixed"}, auth.ClientOptions{APIOrigin: server.URL, HTTPClient: server.Client()})
+	model := NewModel(State{})
+	guard := automation.NewGuard(automation.DefaultPolicy(), automation.SafetyState{}, automation.GuardOptions{Now: time.Now})
+	flow := NewAuthFlow(client, store, model, guard)
+	if restored, err := flow.Restore("account"); err != nil || !restored {
+		t.Fatalf("Restore() restored=%v err=%v", restored, err)
+	}
+	model.Update(func(state *State) { state.Connection = ConnectionOnline })
+
+	err := flow.RecoverExpiredProfile(context.Background(), flow.currentProfileRevision())
+	if err == nil || !auth.RequiresLoginCaptcha(err) {
+		t.Fatalf("RecoverExpiredProfile() error = %v, want captcha classification", err)
+	}
+	if _, ok := client.Profile(); ok || store.profileExists {
+		t.Fatal("expired profile remained after captcha fallback")
+	}
+	state := model.Snapshot()
+	if state.Connection != ConnectionAuth || state.LastError == "" {
+		t.Fatalf("captcha fallback state = %#v", state)
+	}
+	if safety := guard.Snapshot(); safety.DailyActions[automation.ActionLogin] != 1 || safety.ConsecutiveFailures != 0 {
+		t.Fatalf("captcha fallback safety = %#v", safety)
+	}
+
+	// 用户随后打开登录窗口时，第一次无验证码提交只是把同一流程推进到验证码界面，
+	// 不应因为自动恢复已经占用过一次额度而再次 Claim。
+	_, err = flow.CompleteLogin(context.Background(), "account", "password", "", "")
+	if !auth.RequiresLoginCaptcha(err) {
+		t.Fatalf("interactive continuation error = %v, want captcha", err)
+	}
+	if safety := guard.Snapshot(); safety.DailyActions[automation.ActionLogin] != 1 {
+		t.Fatalf("interactive continuation consumed another login quota: %#v", safety)
+	}
+}
+
+func TestAuthFlowRecoveredUnboundProfileRequiresDeviceBinding(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/auth/client/genChallengeData":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"challengeId": "challenge", "challengeCode": "salt"}})
+		case "/api/auth/client/login":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{
+				"userId": 2, "userEid": "new-eid", "tenantId": 3,
+				"secretKey": "new-key", "commonLoginReqHeader": "new-common", "bondedDevice": false,
+			}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	oldProfile := auth.Profile{UserID: 1, UserEID: "old-eid", TenantID: 2, SecretKey: "old-key", CommonLoginReqHeader: "old-common", BondedDevice: true}
+	store := &memoryAccountStore{account: "account", password: "password", profile: oldProfile, profileExists: true}
+	client := auth.NewClient(auth.DeviceIdentity{Code: "ctyun_fixed"}, auth.ClientOptions{APIOrigin: server.URL, HTTPClient: server.Client()})
+	model := NewModel(State{})
+	flow := NewAuthFlow(client, store, model, nil)
+	if restored, err := flow.Restore("account"); err != nil || !restored {
+		t.Fatalf("Restore() restored=%v err=%v", restored, err)
+	}
+
+	if err := flow.RecoverExpiredProfile(context.Background(), flow.currentProfileRevision()); err == nil {
+		t.Fatal("unbound recovery should require user action")
+	}
+	profile, ok := client.Profile()
+	if !ok || profile.BondedDevice || !store.profileExists {
+		t.Fatalf("unbound recovered profile client=%#v ok=%v storeExists=%v", profile, ok, store.profileExists)
+	}
+	if state := model.Snapshot(); state.Connection != ConnectionDeviceBind || state.LastError == "" {
+		t.Fatalf("unbound recovery state = %#v", state)
+	}
+}
+
+func TestAuthFlowDoesNotRecoverExpiredProfileWithAnotherAccountsCredential(t *testing.T) {
+	profile := auth.Profile{UserID: 1, UserEID: "eid", TenantID: 2, SecretKey: "key", CommonLoginReqHeader: "common", BondedDevice: true}
+	store := &memoryAccountStore{account: "other-account", password: "password", profile: profile, profileExists: true}
+	client := auth.NewClient(auth.DeviceIdentity{Code: "ctyun_fixed"}, auth.ClientOptions{})
+	model := NewModel(State{})
+	flow := NewAuthFlow(client, store, model, nil)
+	if restored, err := flow.Restore("current-account"); err != nil || !restored {
+		t.Fatalf("Restore() restored=%v err=%v", restored, err)
+	}
+
+	if err := flow.RecoverExpiredProfile(context.Background(), flow.currentProfileRevision()); err == nil {
+		t.Fatal("mismatched stored credential must not be used for recovery")
+	}
+	if _, ok := client.Profile(); ok || store.profileExists {
+		t.Fatal("expired profile remained after credential mismatch")
+	}
+	if state := model.Snapshot(); state.Connection != ConnectionAuth || state.LastError == "" {
+		t.Fatalf("credential mismatch state = %#v", state)
+	}
+}

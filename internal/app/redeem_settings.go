@@ -56,16 +56,21 @@ type SaveRedeemSettingsRequest struct {
 	MonthlyDays    []int
 }
 
+type redeemCatalogClient interface {
+	Desktops(context.Context) ([]points.Desktop, error)
+	Products(context.Context) ([]points.ProductMall, error)
+}
+
 // RedeemSettingsService 协调“只读目录 -> 配置落盘 -> 运行时计划更新”。
 // 真正消费积分仍只发生在 RedeemJob；设置服务永远不调用 placeOrder。
 type RedeemSettingsService struct {
 	paths  storage.Paths
-	points *points.Client
+	points redeemCatalogClient
 	tasks  *TaskAutomation
 	model  *Model
 }
 
-func NewRedeemSettingsService(paths storage.Paths, pointsClient *points.Client, tasks *TaskAutomation, model *Model) *RedeemSettingsService {
+func NewRedeemSettingsService(paths storage.Paths, pointsClient redeemCatalogClient, tasks *TaskAutomation, model *Model) *RedeemSettingsService {
 	return &RedeemSettingsService{paths: paths, points: pointsClient, tasks: tasks, model: model}
 }
 

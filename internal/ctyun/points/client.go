@@ -241,6 +241,12 @@ func doJSON[T any](ctx context.Context, client *Client, method, path string, que
 		return zero, fmt.Errorf("points: 解析 %s: %w", path, err)
 	}
 	if envelope.Code != 0 {
+		apiErr := auth.APIError{Code: envelope.Code, Message: envelope.Message}
+		if auth.RequiresAuthentication(apiErr) || auth.RequiresDeviceBinding(apiErr) {
+			// 认证类错误必须保留类型，供 App 做受控恢复或转设备绑定；其它积分
+			// 业务错误继续保持 points 自己的错误语义，不把领域错误伪装成 auth。
+			return zero, fmt.Errorf("points: %s: %w", path, apiErr)
+		}
 		return zero, fmt.Errorf("points: code=%s: %s", strconv.Itoa(envelope.Code), envelope.Message)
 	}
 	return envelope.Data, nil

@@ -160,9 +160,16 @@ func TestRuntimeRefreshesPointsAfterFirstLogin(t *testing.T) {
 	runtime.Start(ctx)
 	defer runtime.Stop()
 
-	deadline := time.Now().Add(time.Second)
-	for model.Snapshot().PointsTask.LastRun.IsZero() && time.Now().Before(deadline) {
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		state := model.Snapshot().PointsTask
+		if !state.LastRun.IsZero() && !state.Running {
+			break
+		}
 		time.Sleep(time.Millisecond)
+	}
+	if state := model.Snapshot().PointsTask; state.LastRun.IsZero() || state.Running {
+		t.Fatalf("startup points refresh did not finish: %#v", state)
 	}
 	if _, err := runtime.CompleteLogin(context.Background(), "account", "password", "1234", "captcha-key"); err != nil {
 		t.Fatal(err)

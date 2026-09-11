@@ -5,6 +5,7 @@ package winui
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/tailscale/walk"
@@ -15,6 +16,15 @@ import (
 )
 
 const walkWindowTitle = "天翼云电脑助手"
+
+// 固定 GUID 让 Windows Shell 按应用身份管理托盘图标，避免 Walk 默认的
+// (HWND, ID) 路径在部分 Shell 环境中因 ID 冲突导致 Shell_NotifyIcon(NIM_ADD) 失败。
+var ctyunHelperTrayGUID = windows.GUID{
+	Data1: 0x9127994e,
+	Data2: 0x5e0d,
+	Data3: 0x45a8,
+	Data4: [8]byte{0x9e, 0xf3, 0x44, 0xdf, 0xa0, 0xf0, 0xd1, 0xd2},
+}
 
 type walkMainView struct {
 	runtime *app.Runtime
@@ -48,6 +58,7 @@ type walkMainView struct {
 
 	mu       sync.Mutex
 	quitting bool
+	trayErr  error
 }
 
 func Run(buildRuntime func() (*app.Runtime, error), options RunOptions) error {
@@ -97,12 +108,25 @@ func Run(buildRuntime func() (*app.Runtime, error), options RunOptions) error {
 	}()
 
 	view.applyState(view.model.Snapshot())
-	if !options.StartHidden {
+	if shouldShowMainWindow(options.StartHidden, view.tray != nil) {
 		view.window.Show()
+	}
+	if view.trayErr != nil {
+		fmt.Fprintf(os.Stderr, "winui: system tray unavailable: %v\n", view.trayErr)
+		walk.MsgBox(
+			view.window,
+			"系统托盘不可用",
+			"系统托盘初始化失败，程序已切换为普通窗口模式。关闭主窗口将退出程序。",
+			walk.MsgBoxIconWarning|walk.MsgBoxOK,
+		)
 	}
 
 	walkApp.Run()
 	return nil
+}
+
+func shouldShowMainWindow(startHidden, trayAvailable bool) bool {
+	return !startHidden || !trayAvailable
 }
 
 func (v *walkMainView) create() error {
@@ -208,6 +232,13 @@ func (v *walkMainView) create() error {
 		_ = v.window.SetIcon(icon)
 	}
 
+	if err := v.createTray(); err != nil {
+		// 托盘只是交互入口，不应成为保活和自动任务的启动前置条件。
+		// 托盘不可用时保留 MainWindow 默认关闭行为，让用户仍能正常退出程序。
+		v.trayErr = err
+		return nil
+	}
+
 	// MainWindow 默认会在收到 WM_CLOSE 后调用 Application.Exit，即便 Closing
 	// handler 已取消关闭。托盘应用必须关闭这个默认行为，真正退出只走托盘“退出”。
 	v.window.SetExitOnClose(false)
@@ -221,15 +252,23 @@ func (v *walkMainView) create() error {
 		}
 	})
 
-	return v.createTray()
+	return nil
 }
 
 func (v *walkMainView) createTray() error {
-	tray, err := walk.NewNotifyIcon()
+	tray, err := walk.NewNotifyIconWithGUID(ctyunHelperTrayGUID)
 	if err != nil {
 		return fmt.Errorf("创建系统托盘: %w", err)
 	}
 	v.tray = tray
+	ready := false
+	defer func() {
+		if ready {
+			return
+		}
+		tray.Dispose()
+		v.tray = nil
+	}()
 	if icon, err := walk.NewIconFromResourceId(1); err == nil {
 		_ = tray.SetIcon(icon)
 	} else {
@@ -288,6 +327,7 @@ func (v *walkMainView) createTray() error {
 	if err := tray.SetVisible(true); err != nil {
 		return fmt.Errorf("显示系统托盘: %w", err)
 	}
+	ready = true
 	return nil
 }
 

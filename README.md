@@ -2,13 +2,13 @@
 
 CtyunHelper 是一个面向 Windows 的天翼云电脑助手，提供自动保活、积分任务、AI 任务和积分商品自动兑换等功能。
 
-程序为单文件 `CtyunHelper.exe`，下载后即可运行，不需要安装 Docker、Python、Chromium、.NET 或其他运行环境。
+程序为单文件 `CtyunHelper-v<版本号>.exe`，下载后即可运行，不需要安装 Docker、Python、Chromium、.NET 或其他运行环境。
 
 ## 下载
 
 前往 [Releases](https://github.com/uvwt/CtyunHelper/releases) 下载最新版本：
 
-- Windows：`CtyunHelper.exe`
+- Windows：`CtyunHelper-v<版本号>.exe`
 
 下载后双击运行即可。建议始终从本仓库 Release 页面获取程序。
 
@@ -139,7 +139,7 @@ CtyunHelper 可以自动执行“与AI对话1次”积分任务，也可以通�
 
 ## 更新
 
-下载新版 `CtyunHelper.exe` 后退出旧版本，再用新版文件替换即可。用户配置、登录凭据和运行状态保存在 Windows 用户目录中，不会因为替换 EXE 自动丢失。
+下载新版 `CtyunHelper-v<版本号>.exe` 后退出旧版本，再运行新版文件即可。用户配置、登录凭据和运行状态保存在 Windows 用户目录中，不会因为替换 EXE 自动丢失。
 
 当前版本：**0.1.3**
 
@@ -149,11 +149,10 @@ Windows 界面使用 `github.com/tailscale/walk`，核心业务仍保持在 Go �
 
 ```powershell
 go test ./...
-go build -ldflags "-H=windowsgui" -o CtyunHelper.exe ./cmd/ctyun-helper
-powershell -ExecutionPolicy Bypass -File .\scripts\embed-icon-windows.ps1 -Executable .\CtyunHelper.exe
+powershell -ExecutionPolicy Bypass -File .\scripts\build-release-windows.ps1
 ```
 
-最后一步会把应用图标、Common Controls v6 和 Per-Monitor V2 DPI manifest 直接写入 EXE；最终仍为单文件程序，不需要额外运行时 DLL。
+发布构建脚本会读取 `internal/buildinfo` 中的版本号，生成 `dist\CtyunHelper-v<版本号>.exe`，并把应用图标、Common Controls v6 和 Per-Monitor V2 DPI manifest 直接写入 EXE；最终仍为单文件程序，不需要额外运行时 DLL。
 
 ## 项目
 

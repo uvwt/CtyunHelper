@@ -191,6 +191,10 @@ func (v *walkMainView) openRedeemSettings() {
 
 	dialogChildren := []d.Widget{
 		d.CheckBox{AssignTo: &enabledCheck, Text: "启用自动兑换"},
+		d.GroupBox{Title: "说明", Layout: d.VBox{Spacing: 4}, Children: []d.Widget{
+			d.Label{Text: "兑换积分商品会导致绑定的云电脑重启。", EllipsisMode: d.EllipsisNone},
+			d.Label{Text: "如果 CtyunHelper 安装并运行在该云电脑内，重启后可能无法自动保活。", EllipsisMode: d.EllipsisNone},
+		}},
 		d.GroupBox{Title: "兑换目标", Layout: d.Grid{Columns: 2, Spacing: 8}, Children: []d.Widget{
 			d.Label{Text: "云电脑", MinSize: d.Size{Width: 110}},
 			d.ComboBox{AssignTo: &desktopCombo, Model: []string{"正在加载…"}, StretchFactor: 1},
@@ -239,8 +243,8 @@ func (v *walkMainView) openRedeemSettings() {
 	if err := (d.Dialog{
 		AssignTo:      &dlg,
 		Title:         "兑换设置",
-		Size:          d.Size{Width: 590, Height: 590},
-		MinSize:       d.Size{Width: 520, Height: 470},
+		Size:          d.Size{Width: 590, Height: 650},
+		MinSize:       d.Size{Width: 520, Height: 530},
 		Layout:        d.VBox{Margins: d.Margins{Left: 12, Top: 12, Right: 12, Bottom: 12}, Spacing: 8},
 		Children:      dialogChildren,
 		DefaultButton: &saveButton,

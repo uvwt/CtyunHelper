@@ -22,7 +22,8 @@ func newClinkTLSConfig(endpoint string) *tls.Config {
 		// 才能在 VerifyConnection 里复刻服务端要求的兼容策略。真正的校验逻辑
 		// 见 verifyClinkPeer：证书链签名、ctyun.cn 域名归属、以及“尚未生效的
 		// 证书一律拒绝”都被显式检查，只有“已过期”这一项被兼容性放宽。
-		// codeql[go/disabled-certificate-check] -- 定点抑制，理由见上
+		//
+		// codeql[go/disabled-certificate-check]
 		InsecureSkipVerify: true, //nolint:gosec -- 自定义校验为强制路径
 		VerifyConnection: func(state tls.ConnectionState) error {
 			return verifyClinkPeer(state.PeerCertificates, host, time.Now(), nil)

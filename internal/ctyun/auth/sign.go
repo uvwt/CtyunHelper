@@ -10,7 +10,9 @@ import (
 // 与天翼登录协议同时使用。它不承担任何本地口令存储职责：登录流程只把结果作为
 // 一次性传输摘要提交给服务端，算法由天翼服务端固定要求，客户端无权更换。
 func SHA256Hex(value string) string {
-	digest := sha256.Sum256([]byte(value)) // codeql[go/weak-sensitive-data-hashing] -- 协议规定的传输摘要，非本地口令存储
+	// 抑制说明：SHA256 在此是协议规定的传输摘要（含请求签名用途），不是口令存储。
+	// codeql[go/weak-sensitive-data-hashing]
+	digest := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(digest[:])
 }
 

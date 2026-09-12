@@ -54,6 +54,8 @@ func (s *SettingsService) Current() (GeneralSettings, error) {
 
 // Save 同时修改当前用户 Run 注册表和 config.json。注册表先变更；若配置
 // 原子写盘失败，则恢复原启动状态。只有两边都成功后才更新进程内 Model。
+// 配置部分改走 storage.UpdateConfig：登录提交（SaveAccount）与兑换设置保存
+// 并发时，各自的字段修改不再互相覆盖。
 func (s *SettingsService) Save(settings GeneralSettings) error {
 	if s == nil || s.startup == nil || s.model == nil {
 		return fmt.Errorf("app: 通用设置服务未初始化")
@@ -63,10 +65,6 @@ func (s *SettingsService) Save(settings GeneralSettings) error {
 		Start:   settings.UsagePointsWindowStart,
 		End:     settings.UsagePointsWindowEnd,
 	})
-	if err != nil {
-		return err
-	}
-	config, err := storage.LoadConfig(s.paths)
 	if err != nil {
 		return err
 	}
@@ -81,13 +79,15 @@ func (s *SettingsService) Save(settings GeneralSettings) error {
 		}
 	}
 
-	config.Automation.Enabled = settings.AutomationEnabled
-	config.Automation.UsagePointsWindow = storage.UsagePointsWindowConfig{
-		Enabled: window.Enabled,
-		Start:   window.Start,
-		End:     window.End,
-	}
-	if err := storage.SaveConfig(s.paths, config); err != nil {
+	if err := storage.UpdateConfig(s.paths, func(config *storage.Config) error {
+		config.Automation.Enabled = settings.AutomationEnabled
+		config.Automation.UsagePointsWindow = storage.UsagePointsWindowConfig{
+			Enabled: window.Enabled,
+			Start:   window.Start,
+			End:     window.End,
+		}
+		return nil
+	}); err != nil {
 		if startupChanged {
 			if rollbackErr := s.startup.SetEnabled(previousStartup); rollbackErr != nil {
 				return errors.Join(err, fmt.Errorf("app: 回滚登录后自启动失败: %w", rollbackErr))

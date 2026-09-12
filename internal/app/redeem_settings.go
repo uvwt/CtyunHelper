@@ -120,24 +120,23 @@ func (s *RedeemSettingsService) Save(ctx context.Context, request SaveRedeemSett
 	if s == nil || s.tasks == nil || s.model == nil || s.tasks.redeemJob == nil {
 		return fmt.Errorf("app: 兑换设置依赖未初始化")
 	}
-	if !s.tasks.activityMu.TryLock() {
-		return fmt.Errorf("app: 自动任务正在运行，暂不能修改兑换设置")
-	}
-	defer s.tasks.activityMu.Unlock()
-
-	config, err := storage.LoadConfig(s.paths)
-	if err != nil {
-		return err
-	}
 
 	// 关闭自动兑换是纯本地操作：即使网络不可用或已经退出账号，也必须能
 	// 立即关闭；其余选择保留，方便用户以后重新启用时继续编辑。
 	if !request.Enabled {
-		config.Redeem.Enabled = false
-		if err := storage.SaveConfig(s.paths, config); err != nil {
+		if !s.tasks.activityMu.TryLock() {
+			return fmt.Errorf("app: 自动任务正在运行，暂不能修改兑换设置")
+		}
+		defer s.tasks.activityMu.Unlock()
+		var saved storage.Config
+		if err := storage.UpdateConfig(s.paths, func(config *storage.Config) error {
+			config.Redeem.Enabled = false
+			saved = *config
+			return nil
+		}); err != nil {
 			return err
 		}
-		plan := redeemPlanFromConfig(config.Redeem)
+		plan := redeemPlanFromConfig(saved.Redeem)
 		if err := s.tasks.redeemJob.UpdatePlan(plan); err != nil {
 			return fmt.Errorf("app: 更新运行中兑换计划: %w", err)
 		}
@@ -145,6 +144,8 @@ func (s *RedeemSettingsService) Save(ctx context.Context, request SaveRedeemSett
 		return nil
 	}
 
+	// 目录加载是网络 IO：放在写锁之外，避免持有 activityMu 写锁期间阻塞
+	// 全部定时任务（读锁）最长一次 HTTP 超时；账号状态在拿到写锁后二次校验。
 	state := s.model.Snapshot()
 	if state.Account == "" || state.Connection == ConnectionAuth || state.Connection == ConnectionDeviceBind {
 		return fmt.Errorf("app: 请先完成登录和设备绑定")
@@ -180,30 +181,43 @@ func (s *RedeemSettingsService) Save(ctx context.Context, request SaveRedeemSett
 		return err
 	}
 
+	if !s.tasks.activityMu.TryLock() {
+		return fmt.Errorf("app: 自动任务正在运行，暂不能修改兑换设置")
+	}
+	defer s.tasks.activityMu.Unlock()
+
+	// 持写锁后重新校验账号状态：目录加载期间用户可能已退出登录或解绑。
+	state = s.model.Snapshot()
+	if state.Account == "" || state.Connection == ConnectionAuth || state.Connection == ConnectionDeviceBind {
+		return fmt.Errorf("app: 请先完成登录和设备绑定")
+	}
+
 	// pending 表示 placeOrder 是否扣分未知。此时允许“关闭”，但不允许换成
 	// 另一份启用计划来绕过保护；用户应先人工核对上一笔兑换结果。
-	if s.tasks.redeemJob.Snapshot().LastAttemptStatus == automation.RedeemAttemptPending && redeemIdentityChanged(config.Redeem, plan) {
-		return fmt.Errorf("app: 上次兑换结果仍不确定，请先关闭自动兑换并人工确认后再修改计划")
-	}
-
-	config.Redeem = storage.RedeemConfig{
-		Enabled:        true,
-		Account:        plan.Account,
-		DesktopID:      plan.DesktopID,
-		DesktopName:    plan.DesktopName,
-		ProductID:      plan.ProductID,
-		ProductName:    plan.ProductName,
-		ProductType:    plan.ProductType,
-		CostPoints:     plan.CostPoints,
-		MaxRedeemTimes: plan.MaxRedeemTimes,
-		ScheduleType:   plan.ScheduleType,
-		IntervalDays:   plan.IntervalDays,
-		MonthlyDays:    append([]int(nil), plan.MonthlyDays...),
-	}
-
-	// 先持久化，再更新内存计划。SaveConfig 失败时运行中的计划完全不变；
-	// UpdatePlan 已在上面用同一份 plan 验证过，因此落盘成功后不会出现半更新。
-	if err := storage.SaveConfig(s.paths, config); err != nil {
+	// 先持久化，再更新内存计划。UpdateConfig 失败时运行中的计划完全不变；
+	// UpdatePlan 已用同一份 plan 验证过，因此落盘成功后不会出现半更新。
+	var saved storage.Config
+	if err := storage.UpdateConfig(s.paths, func(config *storage.Config) error {
+		if s.tasks.redeemJob.Snapshot().LastAttemptStatus == automation.RedeemAttemptPending && redeemIdentityChanged(config.Redeem, plan) {
+			return fmt.Errorf("app: 上次兑换结果仍不确定，请先关闭自动兑换并人工确认后再修改计划")
+		}
+		config.Redeem = storage.RedeemConfig{
+			Enabled:        true,
+			Account:        plan.Account,
+			DesktopID:      plan.DesktopID,
+			DesktopName:    plan.DesktopName,
+			ProductID:      plan.ProductID,
+			ProductName:    plan.ProductName,
+			ProductType:    plan.ProductType,
+			CostPoints:     plan.CostPoints,
+			MaxRedeemTimes: plan.MaxRedeemTimes,
+			ScheduleType:   plan.ScheduleType,
+			IntervalDays:   plan.IntervalDays,
+			MonthlyDays:    append([]int(nil), plan.MonthlyDays...),
+		}
+		saved = *config
+		return nil
+	}); err != nil {
 		return err
 	}
 	if err := s.tasks.redeemJob.UpdatePlan(plan); err != nil {

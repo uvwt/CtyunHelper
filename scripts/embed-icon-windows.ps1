@@ -68,6 +68,7 @@ if ($update -eq [IntPtr]::Zero) {
 }
 
 $commit = $false
+$originalError = $null
 try {
     for ($i = 0; $i -lt $count; $i++) {
         $icoOffset = 6 + 16 * $i
@@ -106,9 +107,19 @@ try {
     }
     $commit = $true
 }
+catch {
+    # 记住 try 内的原始异常：finally 里的 EndUpdateResource 失败只作警告，
+    # 不能覆盖根因（PowerShell 中 finally 抛异常会取代原异常）。
+    $originalError = $_
+    throw
+}
 finally {
     if (-not [CtyunHelper.WinResourceNative]::EndUpdateResource($update, -not $commit)) {
-        throw "EndUpdateResource failed. Win32=$([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+        $endError = "EndUpdateResource failed. Win32=$([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+        if ($null -eq $originalError) {
+            throw $endError
+        }
+        Write-Warning $endError
     }
 }
 

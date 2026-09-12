@@ -7,8 +7,14 @@ import (
 	"path/filepath"
 )
 
+// validProtectedName 与 statePath 的校验规则保持一致：仅允许当前目录下的
+// 普通文件名，拒绝空串、路径分隔符与 "."/".." 这类特殊目录引用。
+func validProtectedName(name string) bool {
+	return name != "" && filepath.Base(name) == name && name != "." && name != ".."
+}
+
 func SaveProtectedJSON(paths Paths, name string, value any) error {
-	if name == "" || filepath.Base(name) != name {
+	if !validProtectedName(name) {
 		return fmt.Errorf("storage: 非法受保护文件名")
 	}
 	raw, err := json.Marshal(value)
@@ -24,7 +30,7 @@ func SaveProtectedJSON(paths Paths, name string, value any) error {
 }
 
 func LoadProtectedJSON(paths Paths, name string, destination any) error {
-	if name == "" || filepath.Base(name) != name {
+	if !validProtectedName(name) {
 		return fmt.Errorf("storage: 非法受保护文件名")
 	}
 	raw, err := os.ReadFile(filepath.Join(paths.DataDir, name))
@@ -43,7 +49,7 @@ func LoadProtectedJSON(paths Paths, name string, destination any) error {
 }
 
 func DeleteProtected(paths Paths, name string) error {
-	if name == "" || filepath.Base(name) != name {
+	if !validProtectedName(name) {
 		return fmt.Errorf("storage: 非法受保护文件名")
 	}
 	err := os.Remove(filepath.Join(paths.DataDir, name))

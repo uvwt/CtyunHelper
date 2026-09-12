@@ -58,6 +58,7 @@ type State struct {
 	PointsTask        JobStatus
 	RedeemTask        JobStatus
 	RedeemEnabled     bool
+	RedeemPending     bool
 	RedeemDesktopName string
 	RedeemProductName string
 	RedeemCostPoints  int

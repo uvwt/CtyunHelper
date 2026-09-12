@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 var (
@@ -58,16 +60,6 @@ func freeProxyString(value *uint16) {
 }
 
 func utf16ProxyString(value *uint16) string {
-	if value == nil {
-		return ""
-	}
-	units := make([]uint16, 0, 64)
-	for offset := uintptr(0); ; offset += 2 {
-		unit := *(*uint16)(unsafe.Pointer(uintptr(unsafe.Pointer(value)) + offset))
-		if unit == 0 {
-			break
-		}
-		units = append(units, unit)
-	}
-	return syscall.UTF16ToString(units)
+	// x/sys 的实现带长度上限且处理了 nil 指针，替代原先无上界的手写遍历。
+	return windows.UTF16PtrToString(value)
 }

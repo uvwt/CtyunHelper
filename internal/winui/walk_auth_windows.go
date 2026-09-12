@@ -29,7 +29,10 @@ func (v *walkMainView) openLogin() {
 		captchaAccount string
 		captchaBitmap  *walk.Bitmap
 		busy           bool
-		needsBinding   bool
+		// closed 只在 UI 线程读写：dlg.Run 返回后置位，用于丢弃仍在飞行中的
+		// 网络回调，避免它们继续触碰已销毁的对话框与控件。
+		closed       bool
+		needsBinding bool
 	)
 
 	setBusy := func(value bool) {
@@ -44,7 +47,7 @@ func (v *walkMainView) openLogin() {
 
 	var loadCaptcha func()
 	loadCaptcha = func() {
-		if busy {
+		if busy || closed {
 			return
 		}
 		account := strings.TrimSpace(accountEdit.Text())
@@ -64,6 +67,9 @@ func (v *walkMainView) openLogin() {
 			captcha, err := v.runtime.BeginLoginCaptcha(ctx, account)
 			walk.App().Synchronize(func() {
 				defer logging.RecoverPanic("winui.login_captcha_ui")
+				if closed {
+					return
+				}
 				setBusy(false)
 				if err != nil {
 					walk.MsgBox(dlg, "验证码", err.Error(), walk.MsgBoxIconError|walk.MsgBoxOK)
@@ -82,7 +88,7 @@ func (v *walkMainView) openLogin() {
 	}
 
 	submit := func() {
-		if busy {
+		if busy || closed {
 			return
 		}
 		account := strings.TrimSpace(accountEdit.Text())
@@ -113,6 +119,9 @@ func (v *walkMainView) openLogin() {
 			profile, err := v.runtime.CompleteLogin(ctx, account, password, captchaCode, captchaKey)
 			walk.App().Synchronize(func() {
 				defer logging.RecoverPanic("winui.login_ui")
+				if closed {
+					return
+				}
 				setBusy(false)
 				if err != nil {
 					if auth.RequiresLoginCaptcha(err) {
@@ -188,6 +197,8 @@ func (v *walkMainView) openLogin() {
 	}
 
 	dlg.Run()
+	// 对话框已关闭：丢弃仍在飞行中的网络回调，避免继续触碰已销毁的控件。
+	closed = true
 	if needsBinding {
 		v.openBinding()
 	}
@@ -207,6 +218,8 @@ func (v *walkMainView) openBinding() {
 		captchaKey    string
 		smsKey        string
 		busy          bool
+		// 与登录对话框一致：dlg.Run 返回后丢弃仍在飞行中的网络回调。
+		closed bool
 	)
 
 	setBusy := func(value bool) {
@@ -220,7 +233,7 @@ func (v *walkMainView) openBinding() {
 	}
 
 	loadChallenge := func() {
-		if busy {
+		if busy || closed {
 			return
 		}
 		setBusy(true)
@@ -232,6 +245,9 @@ func (v *walkMainView) openBinding() {
 			challenge, err := v.runtime.BeginDeviceBinding(ctx)
 			walk.App().Synchronize(func() {
 				defer logging.RecoverPanic("winui.device_challenge_ui")
+				if closed {
+					return
+				}
 				setBusy(false)
 				if err != nil {
 					walk.MsgBox(dlg, "设备绑定", err.Error(), walk.MsgBoxIconError|walk.MsgBoxOK)
@@ -247,7 +263,7 @@ func (v *walkMainView) openBinding() {
 	}
 
 	sendSMS := func() {
-		if busy {
+		if busy || closed {
 			return
 		}
 		code := strings.TrimSpace(captchaEdit.Text())
@@ -263,6 +279,9 @@ func (v *walkMainView) openBinding() {
 			newSMSKey, err := v.runtime.SendDeviceSMS(ctx, code, key)
 			walk.App().Synchronize(func() {
 				defer logging.RecoverPanic("winui.device_sms_ui")
+				if closed {
+					return
+				}
 				setBusy(false)
 				if err != nil {
 					walk.MsgBox(dlg, "发送短信失败", err.Error(), walk.MsgBoxIconError|walk.MsgBoxOK)
@@ -276,7 +295,7 @@ func (v *walkMainView) openBinding() {
 	}
 
 	complete := func() {
-		if busy {
+		if busy || closed {
 			return
 		}
 		code := strings.TrimSpace(smsEdit.Text())
@@ -292,6 +311,9 @@ func (v *walkMainView) openBinding() {
 			err := v.runtime.CompleteDeviceBinding(ctx, code, key)
 			walk.App().Synchronize(func() {
 				defer logging.RecoverPanic("winui.device_binding_ui")
+				if closed {
+					return
+				}
 				setBusy(false)
 				if err != nil {
 					walk.MsgBox(dlg, "设备绑定失败", err.Error(), walk.MsgBoxIconError|walk.MsgBoxOK)
@@ -351,6 +373,8 @@ func (v *walkMainView) openBinding() {
 
 	loadChallenge()
 	dlg.Run()
+	// 对话框已关闭：丢弃仍在飞行中的网络回调，避免继续触碰已销毁的控件。
+	closed = true
 }
 
 func setWalkCaptchaImage(view *walk.ImageView, raw []byte, current **walk.Bitmap) error {

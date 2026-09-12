@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/uvwt/CtyunHelper/internal/automation"
+	"github.com/uvwt/CtyunHelper/internal/logging"
 )
 
 const (
@@ -108,7 +109,10 @@ func (a *TaskAutomation) Start(ctx context.Context) {
 	// 启动时只做一次只读积分刷新，不触发兑换；这样当天 04:00/06:00 已错过
 	// 也能尽快把余额和“使用1小时”状态显示到 UI。
 	if a.pointsJob != nil {
-		go func() { _ = a.RunPoints(ctx) }()
+		go func() {
+			defer logging.RecoverPanic("app.points_refresh_startup")
+			_ = a.RunPoints(ctx)
+		}()
 	}
 }
 
@@ -140,7 +144,8 @@ func (a *TaskAutomation) RunRedeem(ctx context.Context) error {
 
 // runRedeem 区分自动调度和用户手动检查：自动调度保留旧脚本最长 80 分钟
 // 等待“使用1小时”的语义；手动点击只读取一次当前状态，未完成时立即返回，
-// 避免 UI 看起来长时间卡住，同时也绝不会提前下单。
+// 避免 UI 看起来长时间卡住。两条路径都由同一个守门保护：任务未完成绝不
+// 提前下单（自动路径含 80 分钟等待超时的场景）。
 func (a *TaskAutomation) runRedeem(ctx context.Context, waitUsage bool) error {
 	a.activityMu.RLock()
 	defer a.activityMu.RUnlock()
@@ -165,8 +170,16 @@ func (a *TaskAutomation) runRedeem(ctx context.Context, waitUsage bool) error {
 			return err
 		}
 		a.applyPointsSnapshot(snapshot)
-		if !waitUsage && snapshot.UsageTaskFound && snapshot.UsageTaskStatus != automation.TaskDone {
-			a.applyRedeemResult(automation.RedeemResult{SkippedReason: "使用1小时任务未完成，暂不兑换"}, nil)
+		// 统一守门：只要“使用1小时”任务存在且未完成，就绝不进入兑换。
+		// 手动路径原本如此；自动路径在 80 分钟等待超时后同样跳过，避免
+		// 未达成条件下消耗积分下单（WaitUsageAndRefresh 超时以 err=nil 返回，
+		// 调用方只能通过任务状态判断是否达成）。
+		if snapshot.UsageTaskFound && snapshot.UsageTaskStatus != automation.TaskDone {
+			reason := "使用1小时任务未完成，暂不兑换"
+			if waitUsage {
+				reason = "使用1小时任务等待超时仍未完成，本次不兑换"
+			}
+			a.applyRedeemResult(automation.RedeemResult{SkippedReason: reason}, nil)
 			return nil
 		}
 	}
@@ -197,6 +210,7 @@ func (a *TaskAutomation) UpdateAccount(account string) {
 		state.RedeemDesktopName = desktopName
 		state.RedeemProductName = productName
 		state.RedeemCostPoints = plan.CostPoints
+		state.RedeemPending = pending
 		state.RedeemEnabled = a.redeemJob.Enabled() && validationErr == nil && accountMatches && !pending
 		switch {
 		case !a.redeemJob.Enabled():

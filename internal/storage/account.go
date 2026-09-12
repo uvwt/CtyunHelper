@@ -20,12 +20,11 @@ func NewAccountStore(paths Paths) *AccountStore {
 }
 
 func (s *AccountStore) SaveAccount(account string) error {
-	config, err := LoadConfig(s.paths)
-	if err != nil {
-		return err
-	}
-	config.Account = account
-	return SaveConfig(s.paths, config)
+	// 走原子读-改-写：登录提交与设置/兑换保存并发时，各自的字段修改不再互相覆盖。
+	return UpdateConfig(s.paths, func(config *Config) error {
+		config.Account = account
+		return nil
+	})
 }
 
 func (s *AccountStore) SaveLogin(account, password string) error {

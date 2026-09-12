@@ -450,12 +450,18 @@ func parseProductTime(value string, location *time.Location) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// commitState 先落盘、成功后再更新内存状态，与 ResolvePending 保持同一原则。
+// 若先改内存再写盘，落盘失败时进程内会认为 pending/成功已生效，而重启后从磁盘
+// 读回的是旧状态（例如 pending 丢失 → 界面显示“结果不确定”，重启后却允许再次
+// 尝试下单），形成界面与实际不一致的漂移。
 func (j *RedeemJob) commitState(state RedeemState) error {
+	if j.save != nil {
+		if err := j.save(state); err != nil {
+			return err
+		}
+	}
 	j.mu.Lock()
 	j.state = state
 	j.mu.Unlock()
-	if j.save == nil {
-		return nil
-	}
-	return j.save(state)
+	return nil
 }

@@ -6,11 +6,16 @@ import (
 	"strings"
 )
 
+// SHA256Hex 是通用摘要工具，被请求签名（PublicSignature/ServerNodeSignature）
+// 与天翼登录协议同时使用。它不承担任何本地口令存储职责：登录流程只把结果作为
+// 一次性传输摘要提交给服务端，算法由天翼服务端固定要求，客户端无权更换。
 func SHA256Hex(value string) string {
-	digest := sha256.Sum256([]byte(value))
+	digest := sha256.Sum256([]byte(value)) // codeql[go/weak-sensitive-data-hashing] -- 协议规定的传输摘要，非本地口令存储
 	return hex.EncodeToString(digest[:])
 }
 
+// LoginPassword 复现天翼官方客户端的口令摘要：sha256(sha256(password) + challengeCode)。
+// 服务端按该固定算法校验，换成任何更“强”的算法都会导致登录失败。
 func LoginPassword(password, challengeCode string) string {
 	return SHA256Hex(SHA256Hex(password) + challengeCode)
 }

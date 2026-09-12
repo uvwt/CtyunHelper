@@ -14,8 +14,16 @@ func newClinkTLSConfig(endpoint string) *tls.Config {
 	return &tls.Config{
 		// Clink 目前以 IP 作为 wss endpoint，但服务端返回的是 *.ctyun.cn 证书，
 		// 且线上仍存在已经过期的旧证书。关闭 Go 的默认 verifier 后立即由
-		// VerifyConnection 执行更严格的 CtYun 专用验证，不做无条件放行。
-		InsecureSkipVerify: true, //nolint:gosec -- custom verification below is mandatory
+		// VerifyConnection 执行更严格的 CtYun 专用验证，不做无条件放行：
+		// VerifyConnection 一定会被调用，返回错误即终止握手，因此不存在
+		// “跳过校验”的路径。
+		//
+		// Go 的 crypto/tls 没有“只忽略有效期”的开关，必须关闭默认 verifier
+		// 才能在 VerifyConnection 里复刻服务端要求的兼容策略。真正的校验逻辑
+		// 见 verifyClinkPeer：证书链签名、ctyun.cn 域名归属、以及“尚未生效的
+		// 证书一律拒绝”都被显式检查，只有“已过期”这一项被兼容性放宽。
+		// codeql[go/disabled-certificate-check] -- 定点抑制，理由见上
+		InsecureSkipVerify: true, //nolint:gosec -- 自定义校验为强制路径
 		VerifyConnection: func(state tls.ConnectionState) error {
 			return verifyClinkPeer(state.PeerCertificates, host, time.Now(), nil)
 		},

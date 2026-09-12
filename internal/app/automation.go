@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/uvwt/CtyunHelper/internal/automation"
+	"github.com/uvwt/CtyunHelper/internal/logging"
 )
 
 const (
@@ -108,7 +109,10 @@ func (a *TaskAutomation) Start(ctx context.Context) {
 	// 启动时只做一次只读积分刷新，不触发兑换；这样当天 04:00/06:00 已错过
 	// 也能尽快把余额和“使用1小时”状态显示到 UI。
 	if a.pointsJob != nil {
-		go func() { _ = a.RunPoints(ctx) }()
+		go func() {
+			defer logging.RecoverPanic("app.points_refresh_startup")
+			_ = a.RunPoints(ctx)
+		}()
 	}
 }
 

@@ -216,6 +216,12 @@ func (k *Keepalive) applyClinkSnapshot(snapshot clink.Snapshot) {
 
 func (k *Keepalive) failClinkAuth(err error) error {
 	message := fmt.Sprintf("Clink 专用登录失败: %v", err)
+	if errors.Is(err, errClinkLoginActionRequired) {
+		k.setError(ConnectionError, message)
+		// 只透传“需要人工处理”的本地标记，不把 legacy APIError 包装给主 AuthFlow。
+		// Runtime 据此停止 30 秒自动重试，现代 Profile 仍保持有效。
+		return fmt.Errorf("%w: app: %s", errClinkLoginActionRequired, message)
+	}
 	k.setError(ConnectionBackoff, message)
 	// 故意不 %w：Runtime 只允许现代 Profile 改变主登录态，不能把 legacy 40010
 	// 重新解释成“主登录过期”。原始错误已经完整保留在状态和日志文本中。

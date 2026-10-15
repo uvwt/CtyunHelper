@@ -9,9 +9,10 @@ import (
 type Action string
 
 const (
-	ActionAI     Action = "ai_chat"
-	ActionLogin  Action = "login"
-	ActionRedeem Action = "redeem"
+	ActionAI         Action = "ai_chat"
+	ActionLogin      Action = "login"
+	ActionClinkLogin Action = "clink_login"
+	ActionRedeem     Action = "redeem"
 )
 
 type Policy struct {
@@ -177,7 +178,9 @@ func (p Policy) limit(action Action) int {
 	switch action {
 	case ActionAI:
 		return p.MaxAI
-	case ActionLogin:
+	case ActionLogin, ActionClinkLogin:
+		// 主登录与 Clink legacy 登录使用同一配置上限，但分别计数。
+		// 两条认证链互不替代，不应因为其中一条恢复登录而耗尽另一条额度。
 		return p.MaxLogin
 	case ActionRedeem:
 		return p.MaxRedeem

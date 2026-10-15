@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 var (
@@ -58,16 +60,7 @@ func freeProxyString(value *uint16) {
 }
 
 func utf16ProxyString(value *uint16) string {
-	if value == nil {
-		return ""
-	}
-	units := make([]uint16, 0, 64)
-	for offset := uintptr(0); ; offset += 2 {
-		unit := *(*uint16)(unsafe.Pointer(uintptr(unsafe.Pointer(value)) + offset))
-		if unit == 0 {
-			break
-		}
-		units = append(units, unit)
-	}
-	return syscall.UTF16ToString(units)
+	// 统一使用 x/sys 提供的 Windows UTF-16 转换，避免在业务代码里重复维护
+	// unsafe 指针遍历；调用方提供的 WinHTTP 字符串本身应以 NUL 结尾。
+	return windows.UTF16PtrToString(value)
 }

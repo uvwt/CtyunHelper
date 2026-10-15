@@ -40,6 +40,8 @@ func (v *walkMainView) openRedeemSettings() {
 		catalog       app.RedeemCatalog
 		catalogLoaded bool
 		busy          bool
+		// dlg.Run 返回后置位：丢弃仍在飞行中的网络回调，避免触碰已销毁控件。
+		closed bool
 	)
 
 	setBusy := func(value bool) {
@@ -73,7 +75,7 @@ func (v *walkMainView) openRedeemSettings() {
 
 	var loadCatalog func()
 	loadCatalog = func() {
-		if busy {
+		if busy || closed {
 			return
 		}
 		setBusy(true)
@@ -85,6 +87,9 @@ func (v *walkMainView) openRedeemSettings() {
 			newCatalog, err := v.runtime.LoadRedeemCatalog(ctx)
 			walk.App().Synchronize(func() {
 				defer logging.RecoverPanic("winui.redeem_catalog_ui")
+				if closed {
+					return
+				}
 				setBusy(false)
 				if err != nil {
 					catalogLoaded = false
@@ -111,7 +116,7 @@ func (v *walkMainView) openRedeemSettings() {
 	}
 
 	save := func() {
-		if busy {
+		if busy || closed {
 			return
 		}
 		request := app.SaveRedeemSettingsRequest{Enabled: enabledCheck.Checked()}
@@ -159,6 +164,9 @@ func (v *walkMainView) openRedeemSettings() {
 			err := v.runtime.SaveRedeemSettings(ctx, request)
 			walk.App().Synchronize(func() {
 				defer logging.RecoverPanic("winui.redeem_save_ui")
+				if closed {
+					return
+				}
 				setBusy(false)
 				if err != nil {
 					_ = statusLabel.SetText("保存失败。")
@@ -276,6 +284,8 @@ func (v *walkMainView) openRedeemSettings() {
 	_ = scheduleCombo.SetCurrentIndex(scheduleIndex)
 	loadCatalog()
 	dlg.Run()
+	// 对话框已关闭：丢弃仍在飞行中的网络回调，避免继续触碰已销毁的控件。
+	closed = true
 }
 
 func parseWalkMonthlyDays(text string) ([]int, error) {

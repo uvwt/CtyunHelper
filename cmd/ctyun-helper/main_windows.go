@@ -140,7 +140,11 @@ func buildRuntime() (*app.Runtime, error) {
 	settings := app.NewSettingsService(paths, startup, model, pointsPolicy)
 	logger, err := logging.New(logging.Options{Path: filepath.Join(paths.LogDir, "CtyunHelper.log")})
 	if err != nil {
-		return nil, err
+		// 与 crash 日志同一原则：日志不可写（目录无权限/被占用/磁盘满）不能
+		// 阻止保活程序启动。Runtime 与 UI 都支持 nil Logger，此时仅失去文件
+		// 日志和"日志"窗口内容，原因已写入 stderr（GUI 进程由 crash 日志接管）。
+		logger = nil
+		fmt.Fprintf(os.Stderr, "winui: file logger unavailable, running without logs: %v\n", err)
 	}
 	runtime := app.NewRuntime(model, authFlow, keepalive, taskAutomation, app.RuntimeOptions{
 		RedeemSettings: redeemSettings,

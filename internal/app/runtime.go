@@ -151,7 +151,12 @@ func (r *Runtime) refreshPointsAsync() {
 	if r == nil || r.automation == nil {
 		return
 	}
-	go func() { _ = r.RunPointsTask() }()
+	go func() {
+		// 与其它 goroutine 边界保持一致：积分刷新的 panic 只记录并终止本次后台
+		// 任务，不能让默认 panic 直接终结整个保活进程。
+		defer logging.RecoverPanic("app.points_refresh_async")
+		_ = r.RunPointsTask()
+	}()
 }
 
 func (r *Runtime) RunRedeemTask() error {

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -113,6 +114,58 @@ func TestTaskAutomationManualRedeemReturnsWhenUsageTaskIsIncomplete(t *testing.T
 	}
 	if state.Points != 650 || state.RedeemSummary != "使用1小时任务未完成，暂不兑换" {
 		t.Fatalf("state = %#v", state)
+	}
+}
+
+func TestTaskAutomationPublishesPendingWhenSuccessStatePersistenceFails(t *testing.T) {
+	now := time.Date(2026, 9, 4, 10, 0, 0, 0, time.Local)
+	model := NewModel(State{Account: "account", Connection: ConnectionOnline})
+	client := &appPointsRedeemClient{
+		tasks: []points.Task{{Name: automation.UsageTaskName, Status: automation.TaskDone, CurrentProgress: 3600}},
+		value: 650,
+	}
+	guard := automation.NewGuard(automation.DefaultPolicy(), automation.SafetyState{}, automation.GuardOptions{
+		Now: func() time.Time { return now },
+	})
+	aiJob := automation.NewAIJob(
+		&appAIPoints{tasks: []points.Task{{Name: automation.AITaskName, Status: automation.TaskDone}}},
+		&appAIChat{}, guard, "你好",
+	)
+	pointsJob := automation.NewPointsJob(client, automation.PointsJobOptions{WaitTimeout: time.Millisecond, PollInterval: time.Millisecond})
+	saveCalls := 0
+	redeemJob := automation.NewRedeemJob(client, guard, automation.RedeemPlan{
+		Enabled: true, Account: "account", DesktopID: 42, ProductID: 99, ProductName: "奖励",
+		ProductType: "gift", CostPoints: 300, ScheduleType: automation.RedeemScheduleDaily,
+	}, automation.RedeemState{}, automation.RedeemJobOptions{
+		Now: func() time.Time { return now },
+		SaveState: func(automation.RedeemState) error {
+			saveCalls++
+			if saveCalls == 2 {
+				return errors.New("state disk failed")
+			}
+			return nil
+		},
+	})
+	tasks, err := NewTaskAutomationWithOptions(model, TaskAutomationOptions{
+		AIJob: aiJob, PointsJob: pointsJob, RedeemJob: redeemJob,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = tasks.RunRedeem(context.Background())
+	if err == nil {
+		t.Fatal("expected success-state persistence error")
+	}
+	state := model.Snapshot()
+	if client.placeCalls != 1 || state.Points != 50 || !state.RedeemPending || state.RedeemEnabled {
+		t.Fatalf("pending state not published after persistence failure: calls=%d state=%#v", client.placeCalls, state)
+	}
+	if state.RedeemSummary != "上次兑换结果不确定，已停止自动兑换" {
+		t.Fatalf("redeem summary = %q", state.RedeemSummary)
+	}
+	if redeemJob.Snapshot().LastAttemptStatus != automation.RedeemAttemptPending {
+		t.Fatalf("job state = %#v", redeemJob.Snapshot())
 	}
 }
 

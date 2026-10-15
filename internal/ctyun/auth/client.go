@@ -213,13 +213,20 @@ func (c *Client) GetTicket(ctx context.Context, service string) (string, error) 
 
 func randomAlphaNumeric(source io.Reader, length int) (string, error) {
 	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	// 248 = 256 - 256%62：拒绝最高位区间，消除 value%len(alphabet) 的模偏差。
+	const unbiasedMax = 248
 	buf := make([]byte, length)
-	raw := make([]byte, length)
-	if _, err := io.ReadFull(source, raw); err != nil {
-		return "", fmt.Errorf("auth: 生成随机数: %w", err)
-	}
-	for i, value := range raw {
-		buf[i] = alphabet[int(value)%len(alphabet)]
+	raw := make([]byte, 1)
+	for i := 0; i < length; i++ {
+		for {
+			if _, err := io.ReadFull(source, raw); err != nil {
+				return "", fmt.Errorf("auth: 生成随机数: %w", err)
+			}
+			if int(raw[0]) < unbiasedMax {
+				break
+			}
+		}
+		buf[i] = alphabet[int(raw[0])%len(alphabet)]
 	}
 	return string(buf), nil
 }

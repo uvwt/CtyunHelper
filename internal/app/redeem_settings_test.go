@@ -19,14 +19,16 @@ import (
 )
 
 type redeemSettingsFixture struct {
-	service    *RedeemSettingsService
-	tasks      *TaskAutomation
-	job        *automation.RedeemJob
-	model      *Model
-	paths      storage.Paths
-	requests   atomic.Int32
-	placeCalls atomic.Int32
-	server     *httptest.Server
+	service        *RedeemSettingsService
+	tasks          *TaskAutomation
+	job            *automation.RedeemJob
+	model          *Model
+	paths          storage.Paths
+	requests       atomic.Int32
+	placeCalls     atomic.Int32
+	catalogStarted chan struct{}
+	catalogRelease chan struct{}
+	server         *httptest.Server
 }
 
 func newRedeemSettingsFixture(t *testing.T, initial storage.RedeemConfig, redeemState automation.RedeemState) *redeemSettingsFixture {
@@ -36,6 +38,15 @@ func newRedeemSettingsFixture(t *testing.T, initial storage.RedeemConfig, redeem
 		fixture.requests.Add(1)
 		switch r.URL.Path {
 		case "/selforder/api/desktop/client/pageDesktop":
+			if fixture.catalogStarted != nil {
+				select {
+				case fixture.catalogStarted <- struct{}{}:
+				default:
+				}
+			}
+			if fixture.catalogRelease != nil {
+				<-fixture.catalogRelease
+			}
 			json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{
 				"desktopList": []map[string]any{{"desktopId": 42, "desktopName": "主云电脑"}},
 			}})
@@ -142,6 +153,48 @@ func TestRedeemSettingsSaveUsesFreshServerProductAndUpdatesRuntime(t *testing.T)
 	}
 	if fixture.placeCalls.Load() != 0 {
 		t.Fatalf("saving settings unexpectedly called placeOrder %d times", fixture.placeCalls.Load())
+	}
+}
+
+func TestRedeemSettingsRejectsSaveWhenAccountChangesDuringCatalogLoad(t *testing.T) {
+	fixture := newRedeemSettingsFixture(t, storage.RedeemConfig{}, automation.RedeemState{})
+	fixture.catalogStarted = make(chan struct{}, 1)
+	fixture.catalogRelease = make(chan struct{})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- fixture.service.Save(context.Background(), SaveRedeemSettingsRequest{
+			Enabled: true, DesktopID: 42, ProductID: 99, ProductType: "gift",
+			ScheduleType: automation.RedeemScheduleDaily, IntervalDays: 1,
+		})
+	}()
+
+	select {
+	case <-fixture.catalogStarted:
+	case <-time.After(time.Second):
+		t.Fatal("catalog request did not start")
+	}
+	fixture.model.Update(func(state *State) {
+		state.Account = "other-account"
+		state.Connection = ConnectionOnline
+	})
+	close(fixture.catalogRelease)
+
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "账号已切换") {
+			t.Fatalf("Save() error = %v, want account-switch rejection", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Save() did not return")
+	}
+
+	config, err := storage.LoadConfig(fixture.paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Redeem.Enabled || fixture.job.Enabled() {
+		t.Fatalf("account switch must not persist or apply redeem plan: config=%#v", config.Redeem)
 	}
 }
 

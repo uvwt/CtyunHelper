@@ -60,12 +60,23 @@ type Message struct {
 	Data []byte
 }
 
+// maxMessagePayloadBytes 是单条 Clink 帧负载的内部上限。Clink 的 Size 字段是
+// uint32，而这里的长度用 int 累加；显式设限可以保证在 32 位平台上
+// 6+extra+len(m.Data) 不会先溢出再按错误的大小分配缓冲区。
+// 本包所有消息都由本地构造（token/deviceCode/短 JSON），16 MiB 远超真实用途。
+const maxMessagePayloadBytes = 16 << 20
+
 // Marshal 按 Clink 的 Type(uint16 LE) + Size(uint32 LE) + Data 编码。
 // buildMessage=true 时，在 Data 前再写 dataLength 和固定偏移 8。
 func (m Message) Marshal(buildMessage bool) []byte {
 	extra := 0
 	if buildMessage {
 		extra = 8
+	}
+	if len(m.Data) > maxMessagePayloadBytes {
+		// 负载超过协议上限属于内部编程错误（帧头无法表达该长度），
+		// 直接 panic 由上层 RecoverPanic 边界记录，避免静默截断或错误分配。
+		panic(fmt.Sprintf("clink: 消息负载 %d 字节超过上限 %d", len(m.Data), maxMessagePayloadBytes))
 	}
 	buf := make([]byte, 6+extra+len(m.Data))
 	binary.LittleEndian.PutUint16(buf[0:2], m.Type)

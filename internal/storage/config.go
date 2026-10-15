@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -107,6 +108,29 @@ func SaveConfig(paths Paths, config Config) error {
 	return writeAtomic(filepath.Join(paths.ConfigDir, "config.json"), raw, 0o600)
 }
 
+// configMu 在进程内串行化 config.json 的读-改-写。LoadConfig/SaveConfig 各自
+// 无锁，调用方各自 Load→改→Save 会互相覆盖（例如登录提交与设置保存并发），
+// 统一改走 UpdateConfig 即可消除丢失更新。
+var configMu sync.Mutex
+
+// UpdateConfig 在进程内互斥下执行 Load → mutate → Save 的原子配置更新。
+// mutate 返回错误时不写盘、配置保持原值。调用方需要拿到更新后的完整配置时，
+// 可在 mutate 内复制 *Config 到闭包外变量。
+// 注意锁序：调用方如已持有 activityMu 等业务锁，必须先于 configMu 获取，
+// 本函数绝不反向调用业务层。
+func UpdateConfig(paths Paths, mutate func(*Config) error) error {
+	configMu.Lock()
+	defer configMu.Unlock()
+	config, err := LoadConfig(paths)
+	if err != nil {
+		return err
+	}
+	if err := mutate(&config); err != nil {
+		return err
+	}
+	return SaveConfig(paths, config)
+}
+
 // EnsureWindowsDevice 只在首次没有 DeviceCode 时生成官方 Windows 新安装形态 ctyun_<32 chars>。
 // 已存在 Code 时永远不替换；其余描述字段缺失只补默认值，不改变设备身份。
 func EnsureWindowsDevice(config *Config, source io.Reader, now func() time.Time) (bool, error) {
@@ -149,13 +173,20 @@ func EnsureWindowsDevice(config *Config, source io.Reader, now func() time.Time)
 
 func randomAlphaNumeric(source io.Reader, length int) (string, error) {
 	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	raw := make([]byte, length)
-	if _, err := io.ReadFull(source, raw); err != nil {
-		return "", fmt.Errorf("storage: 生成 DeviceCode: %w", err)
-	}
+	// 248 = 256 - 256%62：拒绝最高位区间，消除 value%len(alphabet) 的模偏差。
+	const unbiasedMax = 248
 	result := make([]byte, length)
-	for i, value := range raw {
-		result[i] = alphabet[int(value)%len(alphabet)]
+	raw := make([]byte, 1)
+	for i := 0; i < length; i++ {
+		for {
+			if _, err := io.ReadFull(source, raw); err != nil {
+				return "", fmt.Errorf("storage: 生成 DeviceCode: %w", err)
+			}
+			if int(raw[0]) < unbiasedMax {
+				break
+			}
+		}
+		result[i] = alphabet[int(raw[0])%len(alphabet)]
 	}
 	return string(result), nil
 }

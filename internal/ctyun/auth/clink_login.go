@@ -102,6 +102,8 @@ func (c *Client) LegacyClinkHeaders() (http.Header, error) {
 	timestamp := strconv.FormatInt(c.now().UnixMilli(), 10)
 	source := identity.DeviceType + timestamp + strconv.FormatInt(profile.TenantID, 10) + timestamp +
 		strconv.FormatInt(profile.UserID, 10) + identity.Version + profile.SecretKey
+	// 抑制说明：天翼旧 Clink 鉴权协议固定使用 MD5 签名，客户端无法更换算法。
+	// codeql[go/weak-sensitive-data-hashing]
 	digest := md5.Sum([]byte(source))
 
 	headers := c.legacyClinkBaseHeaders()

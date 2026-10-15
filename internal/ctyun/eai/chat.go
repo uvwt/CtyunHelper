@@ -55,7 +55,9 @@ func (c *Client) QueryModels(ctx context.Context) ([]Model, error) {
 func ChooseModel(values []Model) (string, error) {
 	available := make([]Model, 0, len(values))
 	for _, value := range values {
-		if value.KeyModel != "" && strings.EqualFold(value.Status, "avaiable") {
+		// 服务端历史上把 available 拼写为 avaiable；两种拼写同时接受，
+		// 避免服务端修正拼写后可用列表被清空、退化到任取第一个模型。
+		if value.KeyModel != "" && (strings.EqualFold(value.Status, "avaiable") || strings.EqualFold(value.Status, "available")) {
 			available = append(available, value)
 		}
 	}

@@ -50,6 +50,13 @@ func SaveCredential(target, username, password string) error {
 		return err
 	}
 	blob := []byte(password)
+	// 提交到 Credential Manager 后立即清零内存中的明文副本，缩短口令在
+	// 堆上可被内存扫描的窗口（读取路径返回的 string 无法清除，不受影响）。
+	defer func() {
+		for i := range blob {
+			blob[i] = 0
+		}
+	}()
 	value := credential{
 		Type:               credTypeGeneric,
 		TargetName:         targetPtr,

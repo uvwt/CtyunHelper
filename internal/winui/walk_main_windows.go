@@ -431,7 +431,8 @@ func setWalkText(label *walk.TextLabel, text string) {
 }
 
 func redeemNextRunText(state app.State) string {
-	if state.RedeemSummary == "上次兑换结果不确定，已停止自动兑换" {
+	// 用结构化字段而非文案字符串判断，避免提示语调整时悄悄失效。
+	if state.RedeemPending {
 		return "待确认上一笔"
 	}
 	if !state.RedeemEnabled {

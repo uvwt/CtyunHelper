@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -154,6 +155,19 @@ func TestKeepaliveKeepsLegacyProtocolErrorsOutOfPrimaryAuthState(t *testing.T) {
 				t.Fatalf("state = %s, want %s", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestKeepaliveMarksManualClinkLoginRequirementAsNonRetryableError(t *testing.T) {
+	model := NewModel(State{Connection: ConnectionOnline})
+	keepalive := &Keepalive{model: model}
+	err := keepalive.failClinkAuth(fmt.Errorf("%w: credentials rejected", errClinkLoginActionRequired))
+	if !errors.Is(err, errClinkLoginActionRequired) {
+		t.Fatalf("failClinkAuth() error = %v, want manual-action marker", err)
+	}
+	state := model.Snapshot()
+	if state.Connection != ConnectionError || state.LastError == "" {
+		t.Fatalf("state = %#v", state)
 	}
 }
 

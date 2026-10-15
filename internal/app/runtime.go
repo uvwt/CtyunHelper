@@ -263,6 +263,11 @@ func (r *Runtime) runSession(ctx context.Context, done chan struct{}) {
 		if err == nil {
 			return
 		}
+		if errors.Is(err, errClinkLoginActionRequired) {
+			// Clink legacy 登录要求验证码或凭据已失效时，自动重试没有恢复条件。
+			// 等用户重新完成账号登录后 CompleteLogin 会重新启动会话。
+			return
+		}
 		_ = r.auth.HandleSessionError(err)
 		state := r.model.Snapshot().Connection
 		if state == ConnectionAuth || state == ConnectionDeviceBind {

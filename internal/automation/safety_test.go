@@ -21,6 +21,29 @@ func TestDefaultPolicyAllowsTwoAIAttempts(t *testing.T) {
 	}
 }
 
+func TestLoginAndClinkLoginHaveIndependentDailyQuota(t *testing.T) {
+	policy := DefaultPolicy()
+	var state SafetyState
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.Local)
+
+	for i := 0; i < policy.MaxLogin; i++ {
+		if err := state.Claim(now, policy, ActionLogin); err != nil {
+			t.Fatalf("primary login claim %d: %v", i+1, err)
+		}
+	}
+	for i := 0; i < policy.MaxLogin; i++ {
+		if err := state.Claim(now, policy, ActionClinkLogin); err != nil {
+			t.Fatalf("Clink login claim %d: %v", i+1, err)
+		}
+	}
+	if err := state.Claim(now, policy, ActionLogin); err == nil {
+		t.Fatal("primary login should be blocked after its own quota is exhausted")
+	}
+	if err := state.Claim(now, policy, ActionClinkLogin); err == nil {
+		t.Fatal("Clink login should be blocked after its own quota is exhausted")
+	}
+}
+
 func TestFailuresEnterCooldown(t *testing.T) {
 	policy := DefaultPolicy()
 	var state SafetyState

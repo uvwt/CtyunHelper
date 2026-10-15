@@ -2,11 +2,14 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/uvwt/CtyunHelper/internal/automation"
 	"github.com/uvwt/CtyunHelper/internal/ctyun/auth"
 )
+
+var errClinkLoginActionRequired = errors.New("Clink 登录需要人工处理")
 
 type clinkAuthStore interface {
 	LoadLogin() (account, password string, err error)
@@ -47,14 +50,23 @@ func (f *clinkAuthFlow) refresh(ctx context.Context, account string) (auth.Profi
 		return auth.Profile{}, fmt.Errorf("app: Clink 登录凭据与当前账号不一致")
 	}
 	if f.guard != nil {
-		if err := f.guard.Claim(automation.ActionLogin); err != nil {
+		if err := f.guard.Claim(automation.ActionClinkLogin); err != nil {
 			return auth.Profile{}, fmt.Errorf("app: Clink 登录被保守策略阻止: %w", err)
 		}
 	}
 
 	profile, err := f.client.LoginLegacyClink(ctx, storedAccount, password)
 	if err != nil {
-		if f.guard != nil && !auth.RequiresLoginCaptcha(err) {
+		if auth.RequiresLoginCaptcha(err) {
+			// legacy Clink 登录没有验证码续步能力。51030/51031/51032/51040
+			// 都意味着自动重试无法自行恢复，应保留现代 Profile 并等待用户重新登录。
+			return auth.Profile{}, fmt.Errorf(
+				"%w: Clink 登录凭据已失效或服务端要求人工验证，请重新登录天翼云电脑: %v",
+				errClinkLoginActionRequired,
+				err,
+			)
+		}
+		if f.guard != nil {
 			if safetyErr := f.guard.RecordFailure(); safetyErr != nil {
 				return auth.Profile{}, fmt.Errorf("app: Clink 登录失败: %v; 保存失败状态: %w", err, safetyErr)
 			}

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,6 +31,25 @@ type panicSession struct{}
 
 func (panicSession) Run(context.Context) error {
 	panic("session exploded")
+}
+
+type manualClinkLoginSession struct {
+	starts atomic.Int32
+}
+
+func (s *manualClinkLoginSession) Run(context.Context) error {
+	s.starts.Add(1)
+	return fmt.Errorf("%w: credentials rejected", errClinkLoginActionRequired)
+}
+
+func TestRuntimeDoesNotRetryManualClinkLoginRequirement(t *testing.T) {
+	session := &manualClinkLoginSession{}
+	runtime := &Runtime{session: session}
+	done := make(chan struct{})
+	runtime.runSession(context.Background(), done)
+	if session.starts.Load() != 1 {
+		t.Fatalf("session starts = %d, want 1", session.starts.Load())
+	}
 }
 
 func TestRuntimeSessionPanicBecomesRetryableError(t *testing.T) {

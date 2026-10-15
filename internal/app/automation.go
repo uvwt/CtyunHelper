@@ -257,12 +257,23 @@ func applyPointsTasks(state *State, snapshot automation.PointsSnapshot) {
 }
 
 func (a *TaskAutomation) applyRedeemResult(result automation.RedeemResult, runErr error) {
+	redeemState := a.redeemJob.Snapshot()
+	pending := redeemState.LastAttemptStatus == automation.RedeemAttemptPending
+	redeemEnabled := a.redeemJob.Enabled()
+	redeemAccount := a.redeemJob.Account()
+	validationErr := a.redeemJob.Validate()
 	a.model.Update(func(state *State) {
+		state.RedeemPending = pending
+		state.RedeemEnabled = redeemEnabled && validationErr == nil && redeemAccount != "" && redeemAccount == state.Account && !pending
 		if result.Redeemed {
 			state.Points = result.PointsBefore - result.PointsSpent
 			if state.Points < 0 {
 				state.Points = 0
 			}
+		}
+		if pending {
+			state.RedeemSummary = "上次兑换结果不确定，已停止自动兑换"
+		} else if result.Redeemed {
 			state.RedeemSummary = fmt.Sprintf("成功兑换 %d 次，消耗 %d 积分", result.Times, result.PointsSpent)
 		} else if result.SkippedReason != "" {
 			state.RedeemSummary = result.SkippedReason

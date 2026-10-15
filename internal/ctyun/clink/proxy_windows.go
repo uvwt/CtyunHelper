@@ -60,6 +60,7 @@ func freeProxyString(value *uint16) {
 }
 
 func utf16ProxyString(value *uint16) string {
-	// x/sys 的实现带长度上限且处理了 nil 指针，替代原先无上界的手写遍历。
+	// 统一使用 x/sys 提供的 Windows UTF-16 转换，避免在业务代码里重复维护
+	// unsafe 指针遍历；调用方提供的 WinHTTP 字符串本身应以 NUL 结尾。
 	return windows.UTF16PtrToString(value)
 }

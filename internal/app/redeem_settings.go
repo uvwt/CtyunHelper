@@ -150,6 +150,7 @@ func (s *RedeemSettingsService) Save(ctx context.Context, request SaveRedeemSett
 	if state.Account == "" || state.Connection == ConnectionAuth || state.Connection == ConnectionDeviceBind {
 		return fmt.Errorf("app: 请先完成登录和设备绑定")
 	}
+	account := state.Account
 	catalog, err := s.loadCatalog(ctx)
 	if err != nil {
 		return err
@@ -165,7 +166,7 @@ func (s *RedeemSettingsService) Save(ctx context.Context, request SaveRedeemSett
 
 	plan := automation.RedeemPlan{
 		Enabled:        true,
-		Account:        state.Account,
+		Account:        account,
 		DesktopID:      desktop.ID,
 		DesktopName:    desktop.Name,
 		ProductID:      product.ID,
@@ -191,12 +192,14 @@ func (s *RedeemSettingsService) Save(ctx context.Context, request SaveRedeemSett
 	if state.Account == "" || state.Connection == ConnectionAuth || state.Connection == ConnectionDeviceBind {
 		return fmt.Errorf("app: 请先完成登录和设备绑定")
 	}
+	if state.Account != account {
+		return fmt.Errorf("app: 加载兑换目录期间账号已切换，请重新保存兑换设置")
+	}
 
 	// pending 表示 placeOrder 是否扣分未知。此时允许“关闭”，但不允许换成
 	// 另一份启用计划来绕过保护；用户应先人工核对上一笔兑换结果。
 	// 先持久化，再更新内存计划。UpdateConfig 失败时运行中的计划完全不变；
 	// UpdatePlan 已用同一份 plan 验证过，因此落盘成功后不会出现半更新。
-	var saved storage.Config
 	if err := storage.UpdateConfig(s.paths, func(config *storage.Config) error {
 		if s.tasks.redeemJob.Snapshot().LastAttemptStatus == automation.RedeemAttemptPending && redeemIdentityChanged(config.Redeem, plan) {
 			return fmt.Errorf("app: 上次兑换结果仍不确定，请先关闭自动兑换并人工确认后再修改计划")
@@ -215,7 +218,6 @@ func (s *RedeemSettingsService) Save(ctx context.Context, request SaveRedeemSett
 			IntervalDays:   plan.IntervalDays,
 			MonthlyDays:    append([]int(nil), plan.MonthlyDays...),
 		}
-		saved = *config
 		return nil
 	}); err != nil {
 		return err

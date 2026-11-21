@@ -40,6 +40,8 @@ type State struct {
 	DesktopName       string
 	Connection        ConnectionState
 	OnlineSince       time.Time
+	ClinkTransport    string
+	RouteRefreshes    int
 	REDQChallenges    int
 	REDQResponses     int
 	UserInfoRequests  int

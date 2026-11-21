@@ -10,6 +10,7 @@ type Snapshot struct {
 	ChangedAt         time.Time
 	OnlineSince       time.Time
 	LastError         string
+	Transport         string
 	REDQChallenges    int
 	REDQResponses     int
 	UserInfoRequests  int
@@ -75,6 +76,21 @@ func (s *Session) Transition(next State, err error) error {
 func (s *Session) recordProtocolEvent(update func(*Snapshot)) {
 	s.mu.Lock()
 	update(&s.snapshot)
+	snapshot := s.snapshot
+	s.mu.Unlock()
+
+	if s.notify != nil {
+		s.notify(snapshot)
+	}
+}
+
+func (s *Session) setTransport(transport string) {
+	s.mu.Lock()
+	if s.snapshot.Transport == transport {
+		s.mu.Unlock()
+		return
+	}
+	s.snapshot.Transport = transport
 	snapshot := s.snapshot
 	s.mu.Unlock()
 

@@ -17,15 +17,23 @@ type desktopService interface {
 	ResolveClinkConnection(context.Context, desktop.Desktop) (desktop.ConnectionInfo, error)
 }
 
+const (
+	defaultRouteRefreshInitialBackoff = 5 * time.Second
+	defaultRouteRefreshMaxBackoff     = 60 * time.Second
+)
+
 // Keepalive 将主登录态、Clink 专用登录态、云电脑发现/connect 与 Worker 串成一条长期主链。
 // 现代 Profile 只决定当前账号是否可运行；真正的 Clink 请求始终使用独立 legacy Profile。
 type Keepalive struct {
-	primaryAuth  *auth.Client
-	clinkAuth    *clinkAuthFlow
-	desktops     desktopService
-	model        *Model
-	pointsPolicy *PointsSessionPolicy
-	now          func() time.Time
+	primaryAuth                *auth.Client
+	clinkAuth                  *clinkAuthFlow
+	desktops                   desktopService
+	model                      *Model
+	pointsPolicy               *PointsSessionPolicy
+	now                        func() time.Time
+	workerErrorBackoff         time.Duration
+	routeRefreshInitialBackoff time.Duration
+	routeRefreshMaxBackoff     time.Duration
 }
 
 func NewKeepalive(primaryAuth, clinkClient *auth.Client, desktops *desktop.Client, store clinkAuthStore, guard *automation.Guard, model *Model, pointsPolicy *PointsSessionPolicy) *Keepalive {
@@ -54,6 +62,7 @@ func (k *Keepalive) Run(ctx context.Context) error {
 		return k.failClinkAuth(err)
 	}
 
+	var routeRefreshBackoff time.Duration
 	for {
 		selected, connection, routeErr := k.resolveClinkConnection(ctx)
 		if auth.RequiresAuthentication(routeErr) {
@@ -90,6 +99,7 @@ func (k *Keepalive) Run(ctx context.Context) error {
 			FormalAppState:    clink.FormalAppStateBack,
 			ReconnectInterval: reconnectInterval,
 			HeartbeatInterval: 5 * time.Second,
+			ErrorBackoff:      k.workerErrorBackoff,
 		}, k.applyClinkSnapshot)
 
 		switched, runErr := k.runWorkerUntilPolicyChange(ctx, worker, now)
@@ -102,6 +112,34 @@ func (k *Keepalive) Run(ctx context.Context) error {
 			return nil
 		}
 		if switched {
+			routeRefreshBackoff = 0
+			continue
+		}
+		if errors.Is(runErr, clink.ErrRouteRefreshRequired) {
+			// Worker 判定路由/证书可能失效或经历了休眠唤醒：回到 Keepalive 顶层重新拉取
+			// 云电脑列表与 Clink 路由（含必要时的 40010 clinkAuth 刷新）。
+			// 若上一个 Worker 曾完成过有效保活，说明本次是新故障，重置退避；否则指数退避防止请求风暴。
+			if worker.HadHealthyCycle() {
+				routeRefreshBackoff = 0
+			}
+			routeRefreshBackoff = k.nextRouteRefreshBackoff(routeRefreshBackoff)
+			k.model.Update(func(state *State) {
+				state.Connection = ConnectionBackoff
+				state.LastError = runErr.Error()
+				state.RouteRefreshes++
+			})
+			policyChanged, waitErr := k.waitRouteRefreshBackoff(ctx, routeRefreshBackoff)
+			if waitErr != nil {
+				k.model.Update(func(state *State) {
+					state.Connection = ConnectionStopped
+					state.OnlineSince = time.Time{}
+					state.LastError = ""
+				})
+				return nil
+			}
+			if policyChanged {
+				routeRefreshBackoff = 0
+			}
 			continue
 		}
 		if runErr != nil {
@@ -109,6 +147,45 @@ func (k *Keepalive) Run(ctx context.Context) error {
 			return runErr
 		}
 		return nil
+	}
+}
+
+func (k *Keepalive) nextRouteRefreshBackoff(current time.Duration) time.Duration {
+	initial := k.routeRefreshInitialBackoff
+	if initial <= 0 {
+		initial = defaultRouteRefreshInitialBackoff
+	}
+	maxBackoff := k.routeRefreshMaxBackoff
+	if maxBackoff <= 0 {
+		maxBackoff = defaultRouteRefreshMaxBackoff
+	}
+	if maxBackoff < initial {
+		maxBackoff = initial
+	}
+	if current <= 0 {
+		return initial
+	}
+	next := current * 2
+	if next > maxBackoff {
+		return maxBackoff
+	}
+	return next
+}
+
+func (k *Keepalive) waitRouteRefreshBackoff(ctx context.Context, delay time.Duration) (policyChanged bool, err error) {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	var changeC <-chan struct{}
+	if k.pointsPolicy != nil {
+		changeC = k.pointsPolicy.Changes()
+	}
+	select {
+	case <-ctx.Done():
+		return false, ctx.Err()
+	case <-changeC:
+		return true, nil
+	case <-timer.C:
+		return false, nil
 	}
 }
 
@@ -185,6 +262,9 @@ func (k *Keepalive) applyClinkSnapshot(snapshot clink.Snapshot) {
 	k.model.Update(func(state *State) {
 		state.OnlineSince = snapshot.OnlineSince
 		state.LastError = snapshot.LastError
+		if snapshot.Transport != "" {
+			state.ClinkTransport = snapshot.Transport
+		}
 		state.REDQChallenges = snapshot.REDQChallenges
 		state.REDQResponses = snapshot.REDQResponses
 		state.UserInfoRequests = snapshot.UserInfoRequests

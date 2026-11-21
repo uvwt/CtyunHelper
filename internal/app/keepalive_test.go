@@ -2,8 +2,13 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -179,5 +184,196 @@ func TestSelectDesktopSkipsStoppedAndForbidden(t *testing.T) {
 	})
 	if !ok || got.ID() != "3" {
 		t.Fatalf("selected = %#v, ok=%v", got, ok)
+	}
+}
+
+type sequenceDesktopService struct {
+	mu           sync.Mutex
+	listCalls    int
+	resolveCalls int
+	onResolve    func(call int) (desktop.ConnectionInfo, error)
+}
+
+func (s *sequenceDesktopService) ListForKeepalive(context.Context) ([]desktop.Desktop, error) {
+	s.mu.Lock()
+	s.listCalls++
+	s.mu.Unlock()
+	return []desktop.Desktop{{DesktopID: "7", DesktopName: "测试云电脑", UseStatus: "25"}}, nil
+}
+
+func (s *sequenceDesktopService) ResolveClinkConnection(context.Context, desktop.Desktop) (desktop.ConnectionInfo, error) {
+	s.mu.Lock()
+	s.resolveCalls++
+	call := s.resolveCalls
+	s.mu.Unlock()
+	return s.onResolve(call)
+}
+
+type refreshableClinkAuthStore struct {
+	mu         sync.Mutex
+	account    string
+	password   string
+	profile    auth.Profile
+	hasProfile bool
+	deletes    int
+	saves      int
+}
+
+func (s *refreshableClinkAuthStore) LoadLogin() (string, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.account, s.password, nil
+}
+
+func (s *refreshableClinkAuthStore) SaveClinkProfile(_ string, profile auth.Profile) error {
+	s.mu.Lock()
+	s.profile = profile
+	s.hasProfile = true
+	s.saves++
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *refreshableClinkAuthStore) LoadClinkProfile(string) (auth.Profile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.hasProfile {
+		return auth.Profile{}, errors.New("not found")
+	}
+	return s.profile, nil
+}
+
+func (s *refreshableClinkAuthStore) DeleteClinkProfile() error {
+	s.mu.Lock()
+	s.hasProfile = false
+	s.deletes++
+	s.mu.Unlock()
+	return nil
+}
+
+func TestKeepaliveRefreshesRouteAndClinkAuthAfterWorkerFailures(t *testing.T) {
+	var legacyLogins atomic.Int32
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/auth/client/genChallengeData":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"data": map[string]any{"challengeId": "challenge", "challengeCode": "salt"},
+			})
+		case "/api/auth/client/login":
+			legacyLogins.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"data": map[string]any{
+					"userId":               123,
+					"userEid":              "eid-123",
+					"userName":             "tester",
+					"tenantId":             456,
+					"secretKey":            "c2VjcmV0",
+					"commonLoginReqHeader": "refreshed-common",
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer authServer.Close()
+
+	primaryAuth := auth.NewClient(auth.DeviceIdentity{Code: "device-code"}, auth.ClientOptions{})
+	primaryAuth.UseProfile(auth.Profile{UserID: 123, UserName: "tester"})
+	clinkClient := auth.NewClient(auth.DeviceIdentity{Code: "device-code"}, auth.ClientOptions{
+		APIOrigin:  authServer.URL,
+		HTTPClient: authServer.Client(),
+	})
+	store := &refreshableClinkAuthStore{
+		account:    "account",
+		password:   "secret-password",
+		hasProfile: true,
+		profile: auth.Profile{
+			UserID: 123, UserName: "tester", TenantID: 456,
+			SecretKey: "old-secret", CommonLoginReqHeader: "old-common",
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	refreshed := make(chan struct{})
+	desktops := &sequenceDesktopService{
+		onResolve: func(call int) (desktop.ConnectionInfo, error) {
+			switch call {
+			case 1:
+				// 首次返回不可达地址，触发 Worker 连续 3 次快速失败并请求路由刷新。
+				return desktop.ConnectionInfo{
+					DesktopID:       7,
+					Host:            "desktop.internal",
+					Port:            "7033",
+					ClinkLVSOutHost: "127.0.0.1:1",
+				}, nil
+			case 2:
+				// 第二次路由刷新时模拟 40010，验证 Keepalive 自动刷新 Clink 专用登录态。
+				return desktop.ConnectionInfo{}, auth.APIError{Code: auth.CodeNoPermissions, Message: "expired"}
+			default:
+				select {
+				case <-refreshed:
+				default:
+					close(refreshed)
+				}
+				cancel()
+				return desktop.ConnectionInfo{
+					DesktopID:       7,
+					Host:            "desktop.internal",
+					Port:            "7033",
+					ClinkLVSOutHost: "127.0.0.1:1",
+				}, nil
+			}
+		},
+	}
+
+	model := NewModel(State{Account: "account"})
+	keepalive := &Keepalive{
+		primaryAuth:                primaryAuth,
+		clinkAuth:                  newClinkAuthFlow(clinkClient, store, nil),
+		desktops:                   desktops,
+		model:                      model,
+		now:                        time.Now,
+		workerErrorBackoff:         10 * time.Millisecond,
+		routeRefreshInitialBackoff: 10 * time.Millisecond,
+		routeRefreshMaxBackoff:     50 * time.Millisecond,
+	}
+
+	err := keepalive.Run(ctx)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	select {
+	case <-refreshed:
+	default:
+		t.Fatal("expected Keepalive to refresh route and recover after 40010")
+	}
+	if legacyLogins.Load() != 1 || store.deletes != 1 || store.saves != 1 {
+		t.Fatalf("legacyLogins=%d deletes=%d saves=%d, want 1/1/1", legacyLogins.Load(), store.deletes, store.saves)
+	}
+	if got := model.Snapshot().RouteRefreshes; got < 1 {
+		t.Fatalf("RouteRefreshes = %d, want >= 1", got)
+	}
+}
+
+func TestKeepaliveNextRouteRefreshBackoffCapsGrowth(t *testing.T) {
+	keepalive := &Keepalive{}
+	want := []time.Duration{
+		5 * time.Second,
+		10 * time.Second,
+		20 * time.Second,
+		40 * time.Second,
+		60 * time.Second,
+		60 * time.Second,
+	}
+	var current time.Duration
+	for i, expected := range want {
+		current = keepalive.nextRouteRefreshBackoff(current)
+		if current != expected {
+			t.Fatalf("step %d: backoff = %v, want %v", i, current, expected)
+		}
 	}
 }

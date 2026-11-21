@@ -2,10 +2,13 @@ package clink
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/binary"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -127,7 +130,10 @@ func TestFormalWorkerLogsInAttachesAndHeartbeats(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- worker.runFormalCycleWithURL(ctx, wsURL+"/clinkProxy/7/MAIN") }()
+	go func() {
+		_, err := worker.runFormalCycleWithURL(ctx, wsURL+"/clinkProxy/7/MAIN")
+		done <- err
+	}()
 	select {
 	case <-completed:
 		cancel()
@@ -144,5 +150,85 @@ func TestFormalWorkerLogsInAttachesAndHeartbeats(t *testing.T) {
 	snapshot := worker.Snapshot()
 	if snapshot.REDQChallenges != 1 || snapshot.REDQResponses != 1 || snapshot.UserInfoRequests != 1 || snapshot.UserInfoResponses != 1 || snapshot.ClientLogins != 1 || snapshot.LoginResponses != 1 || snapshot.LastLoginResult != 0 || snapshot.AppBackRequests != 1 || snapshot.AttachRequests != 1 || snapshot.Heartbeats < 1 {
 		t.Fatalf("formal counters=%#v", snapshot)
+	}
+}
+
+func TestFormalWorkerRequestsRouteRefreshAfterConsecutiveLoginFailures(t *testing.T) {
+	upgrader := websocket.Upgrader{
+		Subprotocols: []string{"binary"},
+		CheckOrigin:  func(*http.Request) bool { return true },
+	}
+	var attempts atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer ws.Close()
+		attempts.Add(1)
+
+		if _, _, err := ws.ReadMessage(); err != nil {
+			return
+		}
+		if _, _, err := ws.ReadMessage(); err != nil {
+			return
+		}
+		_ = ws.WriteMessage(websocket.BinaryMessage, syntheticREDQChallenge())
+		if _, _, err := ws.ReadMessage(); err != nil {
+			return
+		}
+		_ = ws.WriteMessage(websocket.BinaryMessage, (Message{Type: 103}).Marshal(false))
+		if _, _, err := ws.ReadMessage(); err != nil { // 118
+			return
+		}
+		if _, _, err := ws.ReadMessage(); err != nil { // 112
+			return
+		}
+		// 模拟旧 token 过期导致 136 返回非零错误码。
+		loginResult := make([]byte, 4)
+		binary.LittleEndian.PutUint32(loginResult, 7)
+		_ = ws.WriteMessage(websocket.BinaryMessage, (Message{Type: msgMainLoginResponse, Data: loginResult}).Marshal(false))
+	}))
+	defer server.Close()
+
+	host := strings.TrimPrefix(server.URL, "https://")
+	worker := NewWorker(WorkerConfig{
+		Connection: desktop.ConnectionInfo{
+			DesktopID:           7,
+			Host:                "desktop.internal",
+			Port:                "443",
+			ClinkLVSOutHost:     host,
+			CACert:              "ca",
+			ClientCert:          "client-cert",
+			ClientKey:           "client-key",
+			Token:               "stale-token",
+			TenantMemberAccount: "account",
+		},
+		UserID:            123,
+		UserName:          "tester",
+		DeviceCode:        "device",
+		Mode:              SessionModeFormal,
+		FormalAppState:    FormalAppStateBack,
+		ReconnectInterval: 10 * time.Second,
+		HeartbeatInterval: 20 * time.Millisecond,
+		ErrorBackoff:      10 * time.Millisecond,
+	}, nil)
+	worker.dialer = &websocket.Dialer{
+		HandshakeTimeout: time.Second,
+		Subprotocols:     []string{"binary"},
+		TLSClientConfig:  &tls.Config{InsecureSkipVerify: true},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := worker.Run(ctx)
+	if !errors.Is(err, ErrRouteRefreshRequired) {
+		t.Fatalf("formal Run() error = %v, want ErrRouteRefreshRequired", err)
+	}
+	if got := attempts.Load(); got != defaultMaxConsecutiveFailures {
+		t.Fatalf("formal attempts = %d, want %d", got, defaultMaxConsecutiveFailures)
+	}
+	if worker.HadHealthyCycle() {
+		t.Fatal("HadHealthyCycle() = true, want false")
 	}
 }

@@ -47,6 +47,12 @@ func (r *Runtime) logStateTransition(previous, current State) {
 	if previous.DesktopName != current.DesktopName && current.DesktopName != "" {
 		r.logger.Info("connection", "已选择云电脑", logging.String("desktop", current.DesktopName))
 	}
+	if previous.ClinkTransport != current.ClinkTransport && current.ClinkTransport != "" {
+		r.logger.Info("clink", "连接链路切换", logging.String("transport", current.ClinkTransport))
+	}
+	if previous.RouteRefreshes != current.RouteRefreshes && current.RouteRefreshes > 0 {
+		r.logger.Info("connection", "触发 Clink 路由刷新", logging.Int("count", current.RouteRefreshes))
+	}
 	if previous.REDQChallenges != current.REDQChallenges {
 		r.logger.Info("clink", "收到 REDQ 保活校验", logging.Int("count", current.REDQChallenges))
 	}

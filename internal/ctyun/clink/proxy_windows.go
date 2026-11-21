@@ -38,6 +38,7 @@ func clinkProxy(req *http.Request) (*url.URL, error) {
 	// Clink 是专用中继通道。天翼返回的中继地址可能命中浏览器的私网 bypass
 	// 规则，但旧 CtYun/Windows ClientWebSocket 的真实工作链仍经当前用户代理
 	// 建立该隧道；这里跟随显式代理本身，不套用面向普通网页的 ProxyOverride。
+	// 当该代理不可用、超时或卡死时，由 transportPolicy 在拨号层自动回退直连并切换健康状态。
 	return parseProxyServer(proxy, req.URL.Scheme)
 }
 

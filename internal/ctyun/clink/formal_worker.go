@@ -12,13 +12,15 @@ import (
 	"github.com/uvwt/CtyunHelper/internal/logging"
 )
 
+const formalHandshakeReadTimeout = 20 * time.Second
+
 // runFormalCycle 在已经验证过的轻量 Clink MAIN 链路上继续完成正式登录。
 // 实机验证表明：112 登录成功并维持 MAIN heartbeat 后，服务端会延迟批量累计
 // “使用1小时”进度；因此这里不伪造 DISPLAY/INPUTS 子通道。
-func (w *Worker) runFormalCycle(ctx context.Context) error {
+func (w *Worker) runFormalCycle(ctx context.Context) (cycleOutcome, error) {
 	connection := w.config.Connection
 	if connection.Token == "" || connection.TenantMemberAccount == "" || w.config.DeviceCode == "" {
-		return fmt.Errorf("clink: 正式会话缺少 token、tenantMemberAccount 或 deviceCode")
+		return cycleOutcome{}, fmt.Errorf("clink: 正式会话缺少 token、tenantMemberAccount 或 deviceCode")
 	}
 	endpoint := (&url.URL{
 		Scheme: "wss",
@@ -28,23 +30,33 @@ func (w *Worker) runFormalCycle(ctx context.Context) error {
 	return w.runFormalCycleWithURL(ctx, endpoint)
 }
 
-func (w *Worker) runFormalCycleWithURL(ctx context.Context, endpoint string) error {
+func (w *Worker) runFormalCycleWithURL(ctx context.Context, endpoint string) (cycleOutcome, error) {
+	var outcome cycleOutcome
+	var verifiedAt time.Time
+	finish := func(err error) (cycleOutcome, error) {
+		if outcome.protocolVerified {
+			outcome.verifiedDuration = w.currentTime().Sub(verifiedAt)
+		}
+		return outcome, err
+	}
+
 	connection := w.config.Connection
 	if err := w.session.Transition(StateConnecting, nil); err != nil {
-		return err
+		return finish(err)
 	}
 	headers := http.Header{"Origin": {defaultOrigin}}
-	ws, response, err := w.dialer.DialContext(ctx, endpoint, headers)
+	ws, response, transport, err := w.dialWebSocket(ctx, endpoint, headers)
+	outcome.usedProxy = transport == TransportProxy
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("clink: 正式 MAIN WebSocket 连接失败 HTTP %d: %w", response.StatusCode, err)
+			return finish(fmt.Errorf("clink: 正式 MAIN WebSocket 连接失败 HTTP %d: %w", response.StatusCode, err))
 		}
-		return fmt.Errorf("clink: 正式 MAIN WebSocket 连接失败: %w", err)
+		return finish(fmt.Errorf("clink: 正式 MAIN WebSocket 连接失败: %w", err))
 	}
 	defer ws.Close()
 
 	if err := w.session.Transition(StateHandshaking, nil); err != nil {
-		return err
+		return finish(err)
 	}
 	handshake := NewProxyHandshake(
 		connection.ClinkLVSOutHost,
@@ -56,7 +68,7 @@ func (w *Worker) runFormalCycleWithURL(ctx context.Context, endpoint string) err
 	)
 	payload, err := handshake.JSON()
 	if err != nil {
-		return fmt.Errorf("clink: 编码正式 MAIN 代理握手: %w", err)
+		return finish(fmt.Errorf("clink: 编码正式 MAIN 代理握手: %w", err))
 	}
 
 	var writeMu sync.Mutex
@@ -66,16 +78,18 @@ func (w *Worker) runFormalCycleWithURL(ctx context.Context, endpoint string) err
 		return ws.WriteMessage(messageType, data)
 	}
 	if err := write(websocket.TextMessage, payload); err != nil {
-		return fmt.Errorf("clink: 发送正式 MAIN 代理握手: %w", err)
+		return finish(fmt.Errorf("clink: 发送正式 MAIN 代理握手: %w", err))
 	}
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return finish(ctx.Err())
 	case <-time.After(500 * time.Millisecond):
 	}
 	if err := write(websocket.BinaryMessage, InitialPayload()); err != nil {
-		return fmt.Errorf("clink: 发送正式 MAIN 初始 REDQ: %w", err)
+		return finish(fmt.Errorf("clink: 发送正式 MAIN 初始 REDQ: %w", err))
 	}
+	// 正式会话周期长达 80 分钟；在 136 登录确认前设置读超时，防止静默黑洞或挂死代理占满整个周期。
+	_ = ws.SetReadDeadline(time.Now().Add(formalHandshakeReadTimeout))
 
 	cycleCtx, cancel := context.WithTimeout(ctx, w.config.ReconnectInterval)
 	defer cancel()
@@ -102,14 +116,14 @@ func (w *Worker) runFormalCycleWithURL(ctx context.Context, endpoint string) err
 		messageType, data, err := ws.ReadMessage()
 		if err != nil {
 			if cycleCtx.Err() != nil {
-				return nil
+				return finish(nil)
 			}
 			select {
 			case heartbeatFailure := <-heartbeatErr:
-				return heartbeatFailure
+				return finish(heartbeatFailure)
 			default:
 			}
-			return fmt.Errorf("clink: 读取正式 MAIN WebSocket: %w", err)
+			return finish(fmt.Errorf("clink: 读取正式 MAIN WebSocket: %w", err))
 		}
 		if messageType != websocket.BinaryMessage || len(data) == 0 {
 			continue
@@ -120,10 +134,10 @@ func (w *Worker) runFormalCycleWithURL(ctx context.Context, endpoint string) err
 			})
 			responsePayload, err := BuildREDQResponse(data)
 			if err != nil {
-				return err
+				return finish(err)
 			}
 			if err := write(websocket.BinaryMessage, responsePayload); err != nil {
-				return fmt.Errorf("clink: 发送正式 MAIN REDQ 响应: %w", err)
+				return finish(fmt.Errorf("clink: 发送正式 MAIN REDQ 响应: %w", err))
 			}
 			w.session.recordProtocolEvent(func(snapshot *Snapshot) {
 				snapshot.REDQResponses++
@@ -140,10 +154,10 @@ func (w *Worker) runFormalCycleWithURL(ctx context.Context, endpoint string) err
 				})
 				userInfo, err := BuildUserInfoMessage(w.config.UserID, w.config.UserName)
 				if err != nil {
-					return fmt.Errorf("clink: 编码正式 MAIN 用户信息: %w", err)
+					return finish(fmt.Errorf("clink: 编码正式 MAIN 用户信息: %w", err))
 				}
 				if err := write(websocket.BinaryMessage, userInfo); err != nil {
-					return fmt.Errorf("clink: 发送正式 MAIN 118 用户信息: %w", err)
+					return finish(fmt.Errorf("clink: 发送正式 MAIN 118 用户信息: %w", err))
 				}
 				w.session.recordProtocolEvent(func(snapshot *Snapshot) {
 					snapshot.UserInfoResponses++
@@ -157,10 +171,10 @@ func (w *Worker) runFormalCycleWithURL(ctx context.Context, endpoint string) err
 						connection.TenantMemberAccount,
 					)
 					if err != nil {
-						return err
+						return finish(err)
 					}
 					if err := write(websocket.BinaryMessage, login); err != nil {
-						return fmt.Errorf("clink: 发送 112 正式 MAIN 登录: %w", err)
+						return finish(fmt.Errorf("clink: 发送 112 正式 MAIN 登录: %w", err))
 					}
 					loginSent = true
 					_ = ws.SetReadDeadline(time.Now().Add(15 * time.Second))
@@ -171,21 +185,21 @@ func (w *Worker) runFormalCycleWithURL(ctx context.Context, endpoint string) err
 
 			case msgMainLoginResponse:
 				if !loginSent {
-					return fmt.Errorf("clink: 在 112 正式 MAIN 登录前收到 136 响应")
+					return finish(fmt.Errorf("clink: 在 112 正式 MAIN 登录前收到 136 响应"))
 				}
 				if loginAccepted {
 					continue
 				}
 				result, err := ParseLoginResult(message.Data)
 				if err != nil {
-					return err
+					return finish(err)
 				}
 				w.session.recordProtocolEvent(func(snapshot *Snapshot) {
 					snapshot.LoginResponses++
 					snapshot.LastLoginResult = result
 				})
 				if result != 0 {
-					return fmt.Errorf("clink: 136 正式 MAIN 登录失败 result=%d", result)
+					return finish(fmt.Errorf("clink: 136 正式 MAIN 登录失败 result=%d", result))
 				}
 				loginAccepted = true
 				_ = ws.SetReadDeadline(time.Time{})
@@ -194,31 +208,33 @@ func (w *Worker) runFormalCycleWithURL(ctx context.Context, endpoint string) err
 					// 官方客户端把 MAIN 的应用后台态编码为独立的 113 空消息。
 					// 登录一旦被服务端接受就立即声明 back，尽量避免 Helper 成为前台会话 owner。
 					if err := write(websocket.BinaryMessage, BuildAppBackMessage()); err != nil {
-						return fmt.Errorf("clink: 发送 113 app status back: %w", err)
+						return finish(fmt.Errorf("clink: 发送 113 app status back: %w", err))
 					}
 					w.session.recordProtocolEvent(func(snapshot *Snapshot) {
 						snapshot.AppBackRequests++
 					})
 				case FormalAppStateFront:
 					if err := write(websocket.BinaryMessage, BuildAppFrontMessage()); err != nil {
-						return fmt.Errorf("clink: 发送 114 app status front: %w", err)
+						return finish(fmt.Errorf("clink: 发送 114 app status front: %w", err))
 					}
 					w.session.recordProtocolEvent(func(snapshot *Snapshot) {
 						snapshot.AppFrontRequests++
 					})
 				}
 				if err := write(websocket.BinaryMessage, BuildAttachChannelsMessage()); err != nil {
-					return fmt.Errorf("clink: 发送 104 attach channels: %w", err)
+					return finish(fmt.Errorf("clink: 发送 104 attach channels: %w", err))
 				}
 				if err := write(websocket.BinaryMessage, BuildClientVersionMessage()); err != nil {
-					return fmt.Errorf("clink: 发送 116 client version: %w", err)
+					return finish(fmt.Errorf("clink: 发送 116 client version: %w", err))
 				}
 				w.session.recordProtocolEvent(func(snapshot *Snapshot) {
 					snapshot.AttachRequests++
 				})
 				if err := w.session.Transition(StateOnline, nil); err != nil {
-					return err
+					return finish(err)
 				}
+				outcome.protocolVerified = true
+				verifiedAt = w.currentTime()
 				if !heartbeatStarted {
 					heartbeatStarted = true
 					go w.runFormalHeartbeat(heartbeatCtx, ws, &writeMu, heartbeatErr)

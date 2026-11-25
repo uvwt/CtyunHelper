@@ -117,7 +117,7 @@ func (p *transportPolicy) dial(ctx context.Context, base *websocket.Dialer, endp
 		return nil, nil, TransportDirect, fmt.Errorf("clink: WebSocket dialer 未初始化")
 	}
 	if base.Proxy == nil {
-		ws, resp, err := base.DialContext(ctx, endpoint, headers)
+		ws, resp, err := dialWithoutProxy(ctx, base, endpoint, headers)
 		return ws, resp, TransportDirect, err
 	}
 
@@ -128,7 +128,7 @@ func (p *transportPolicy) dial(ctx context.Context, base *websocket.Dialer, endp
 	}
 	proxyURL, proxyErr := base.Proxy(proxyReq)
 	if proxyErr == nil && proxyURL == nil {
-		ws, resp, dialErr := base.DialContext(ctx, endpoint, headers)
+		ws, resp, dialErr := dialWithoutProxy(ctx, base, endpoint, headers)
 		return ws, resp, TransportDirect, dialErr
 	}
 	if proxyErr != nil {
@@ -184,6 +184,9 @@ func (p *transportPolicy) dial(ctx context.Context, base *websocket.Dialer, endp
 func dialWithoutProxy(ctx context.Context, base *websocket.Dialer, endpoint string, headers http.Header) (*websocket.Conn, *http.Response, error) {
 	dialer := *base
 	dialer.Proxy = nil
+	if dialer.NetDialContext == nil && dialer.NetDial == nil {
+		dialer.NetDialContext = directNetDialContext
+	}
 	return dialer.DialContext(ctx, endpoint, headers)
 }
 
